@@ -155,9 +155,13 @@ tijdelijke SQLite-database en een opname-mailer in plaats van echte SMTP.
 
 ## Grenzen en vervolgstappen
 
-- **Aangifte**: het btw-overzicht bevat alleen btw op eigen facturen; geen
-  voorbelasting, geen correcties, geen aangifte bij de Belastingdienst. Direct
-  indienen vraagt SBR/Digipoort met een PKIoverheid-certificaat.
+- **Aangifte**: het btw-overzicht rekent per aangifterubriek met voorbelasting
+  uit bonnetjes, maar zonder naar de gebruiker verlegde btw (2a/4), privégebruik
+  of suppleties, en dient niet zelf in. Direct indienen vraagt SBR/Digipoort met
+  een PKIoverheid-certificaat.
+- **Facturen zijn onveranderlijk**: correcties lopen via `POST
+  /api/invoices/{id}/credit`; partijgegevens staan als JSON-snapshot op de
+  factuur (`supplier_snapshot`, `customer_snapshot`).
 - **Bankkoppeling**: bewust nog geen PSD2-koppeling. Kansrijke AIS-providers:
   Enable Banking (per gekoppelde rekening) en Ponto (pay-as-you-go).
 - **E-facturatie**: B2B e-invoicing is in Nederland nog niet verplicht (kabinet

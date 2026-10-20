@@ -9,10 +9,11 @@ VAT per rate and the applicable VAT rate with its amount.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
@@ -47,9 +48,10 @@ def dutch_date(value: date | None) -> str:
 
 
 def money(cents: int) -> str:
-    whole, rest = divmod(int(cents), 100)
+    sign = "-" if cents < 0 else ""
+    whole, rest = divmod(abs(int(cents)), 100)
     groups = f"{whole:,}".replace(",", ".")
-    return f"€ {groups},{rest:02d}"
+    return f"€ {sign}{groups},{rest:02d}"
 
 
 def quantity(value: Decimal | float | int) -> str:
@@ -118,6 +120,10 @@ class InvoicePdfData:
     note: str = ""
     paid: bool = False
     missing_fields: list[str] = field(default_factory=list)
+    credit: bool = False
+    credited_number: str = ""
+    credited_date: date | None = None
+    vat_notice: str = ""
 
 
 def _styles() -> dict[str, ParagraphStyle]:
@@ -141,7 +147,22 @@ def _styles() -> dict[str, ParagraphStyle]:
     }
 
 
+def _escape_party(party: Party) -> Party:
+    return replace(party, **{item.name: escape(getattr(party, item.name)) for item in fields(party)})
+
+
 def build_invoice_pdf(data: InvoicePdfData) -> bytes:
+    # reportlab Paragraphs parse markup, so every user-supplied text is escaped.
+    data = replace(
+        data,
+        invoice_number=escape(data.invoice_number),
+        note=escape(data.note),
+        credited_number=escape(data.credited_number),
+        supplier=_escape_party(data.supplier),
+        customer=_escape_party(data.customer),
+        lines=[replace(line, description=escape(line.description)) for line in data.lines],
+        missing_fields=[escape(item) for item in data.missing_fields],
+    )
     buffer = BytesIO()
     document = SimpleDocTemplate(
         buffer,
@@ -150,9 +171,9 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
         rightMargin=20 * mm,
         topMargin=18 * mm,
         bottomMargin=18 * mm,
-        title=f"Factuur {data.invoice_number}",
+        title=f"{'Creditfactuur' if data.credit else 'Factuur'} {data.invoice_number}",
         author=data.supplier.name,
-        subject=f"Factuur {data.invoice_number}",
+        subject=f"{'Creditfactuur' if data.credit else 'Factuur'} {data.invoice_number}",
         # Keep the text streams readable: invoice PDFs stay small and the
         # contents can be checked without a separate text-extraction step.
         pageCompression=0,
@@ -205,7 +226,7 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
     )
 
     header = Table(
-        [[supplier_block, Table([[Paragraph("FACTUUR", styles["title"])]], style=TableStyle([
+        [[supplier_block, Table([[Paragraph("CREDITFACTUUR" if data.credit else "FACTUUR", styles["title"])]], style=TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
@@ -232,7 +253,7 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
         customer_lines.append(f"T.a.v. {data.customer.contact}")
     customer_lines.extend(data.customer.address_lines())
     if data.customer.vat_number:
-        customer_lines.append(f"Btw-nummer klant: {data.customer.vat_number}")
+        customer_lines.append(f"Btw-id afnemer: {data.customer.vat_number}")
 
     address_table = Table(
         [
@@ -332,9 +353,15 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
     story.append(totals_table)
     story.append(Spacer(1, 8 * mm))
 
-    if data.paid:
+    if data.credit:
         payment_lines = [
-            f"<b>Deze factuur is betaald.</b> Met dank voor je betaling.",
+            f"<b>Creditering van factuur {data.credited_number} van {dutch_date(data.credited_date)}.</b> "
+            f"Het bedrag van {money(-data.total_cents)} verrekenen we met die factuur, "
+            "of storten we terug als je die al hebt betaald.",
+        ]
+    elif data.paid:
+        payment_lines = [
+            "<b>Deze factuur is betaald.</b> Met dank voor je betaling.",
         ]
     else:
         payment_lines = [
@@ -344,6 +371,8 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
             + f", onder vermelding van factuurnummer {data.invoice_number}.",
             "Vermeld bij je betaling altijd het factuurnummer, dan kunnen we je betaling direct verwerken.",
         ]
+    if data.vat_notice:
+        payment_lines.insert(0, f"<b>{data.vat_notice}</b>")
     if data.note:
         payment_lines.append(data.note)
     payment_block = Paragraph("<br/><br/>".join(payment_lines), styles["body"])

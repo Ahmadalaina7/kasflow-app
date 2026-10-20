@@ -207,7 +207,7 @@
 
   function renderOpenInvoices(invoices, customerNames) {
     const open = invoices
-      .filter(invoice => statusOf(invoice) !== 'paid')
+      .filter(Kasflow.isOpen)
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
       .slice(0, 5);
 
@@ -262,7 +262,7 @@
       const year = dateToday.getFullYear();
       const yearInvoices = invoices.filter(invoice => invoice.invoice_date.startsWith(String(year)));
       const revenueCents = yearInvoices.reduce((sum, invoice) => sum + invoice.subtotal_cents, 0);
-      const openInvoices = invoices.filter(invoice => statusOf(invoice) !== 'paid');
+      const openInvoices = invoices.filter(Kasflow.isOpen);
       const openCents = openInvoices.reduce((sum, invoice) => sum + invoice.total_cents, 0);
       const overdue = openInvoices.filter(invoice => statusOf(invoice) === 'overdue');
 

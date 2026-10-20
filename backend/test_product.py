@@ -4,7 +4,7 @@ import io
 import json
 import re
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -63,6 +63,8 @@ def register(client, email="sanne@example.nl", company_name="Studio Veer"):
         },
     )
     assert response.status_code == 201, response.text
+    if not response.json()["verification_required"]:
+        complete_profile(client)
     return response.json()
 
 
@@ -393,47 +395,177 @@ def test_invoices_only_accept_dutch_vat_rates(tmp_path):
     assert rejected.status_code == 422
 
 
-def test_approved_vat_quarter_is_locked_for_new_invoices(tmp_path):
+def invoice_payload(customer_id, number, day, vat_rate="0.21", **extra):
+    return {
+        "customer_id": customer_id,
+        "number": number,
+        "invoice_date": day.isoformat(),
+        "due_date": day.isoformat(),
+        "lines": [{"description": "Werk", "quantity": "1", "unit_price": "100", "vat_rate": vat_rate}],
+        **extra,
+    }
+
+
+def previous_quarter_day():
+    today = date.today()
+    start_month = ((today.month - 1) // 3) * 3 + 1
+    return date(today.year, start_month, 1) - timedelta(days=1)
+
+
+def test_approved_vat_quarter_is_locked_for_invoices_and_receipts(tmp_path):
     client = client_for(tmp_path)
     register(client)
     customer = create_customer(client)
-    create_invoice(client, customer["id"], "2026-001")
-    today = date.today()
-    period = {"year": today.year, "quarter": (today.month - 1) // 3 + 1}
-    approved = client.post("/api/vat/approve", json=period).json()
+    day = previous_quarter_day()
+    assert client.post("/api/invoices", json=invoice_payload(customer["id"], "2026-001", day)).status_code == 201
+    period = {"year": day.year, "quarter": (day.month - 1) // 3 + 1}
+    approved = client.post("/api/vat/approve", json=period)
+    assert approved.status_code == 200
 
-    late = client.post(
-        "/api/invoices",
-        json={
-            "customer_id": customer["id"],
-            "number": "2026-002",
-            "invoice_date": today.isoformat(),
-            "due_date": today.isoformat(),
-            "lines": [{"description": "Te laat", "quantity": "1", "unit_price": "10", "vat_rate": "0.21"}],
-        },
-    )
+    late = client.post("/api/invoices", json=invoice_payload(customer["id"], "2026-002", day))
     assert late.status_code == 409
-    assert client.get("/api/vat").json()["current"]["vat_cents"] == approved["vat_cents"]
+    receipt = client.post(
+        "/api/receipts",
+        data={"vendor": "Winkel", "receipt_date": day.isoformat(), "amount": "12.10", "vat_amount": "2.10", "category": "Kantoor"},
+        files={"file": ("bon.png", b"\x89PNG\r\n", "image/png")},
+    )
+    assert receipt.status_code == 409
+    assert client.get("/api/vat").json()["quarters"][1]["vat_cents"] == approved.json()["vat_cents"]
 
     client.delete("/api/vat/approval", params=period)
-    create_invoice(client, customer["id"], "2026-002")
+    assert client.post("/api/invoices", json=invoice_payload(customer["id"], "2026-002", day)).status_code == 201
 
 
-def test_incomplete_invoice_is_a_marked_draft_and_cannot_be_sent(tmp_path):
+def test_invoice_requires_legal_fields_and_freezes_them(tmp_path):
     client, _ = verified_client(tmp_path)
     customer = client.post(
         "/api/customers", json={"name": "Zonder adres", "email": "klant@example.nl"}
     ).json()
-    invoice = create_invoice(client, customer["id"], "2026-200")
-
-    pdf = client.get(f"/api/invoices/{invoice['id']}/pdf").content
-    assert b"CONCEPT" in pdf
-    assert b"voldoet aan de factuureisen" not in pdf
-
-    blocked = client.post(f"/api/invoices/{invoice['id']}/send", json={})
+    blocked = client.post("/api/invoices", json=invoice_payload(customer["id"], "2026-200", date.today()))
     assert blocked.status_code == 422
     detail = blocked.json()["detail"]
     assert "je bedrijfsadres" in detail and "je btw-id" in detail and "Zonder adres" in detail
+
+    complete_profile(client)
+    client.patch(f"/api/customers/{customer['id']}", json={"name": "Klant & Zn", "street": "Dam 2", "postal_code": "1012 JS", "city": "Amsterdam"})
+    invoice = client.post("/api/invoices", json=invoice_payload(customer["id"], "2026-200", date.today())).json()
+
+    client.patch(f"/api/customers/{customer['id']}", json={"name": "Nieuwe Naam", "street": "Ander 9", "postal_code": "9999 ZZ", "city": "Elders"})
+    pdf = client.get(f"/api/invoices/{invoice['id']}/pdf").content
+    assert b"Dam 2" in pdf and b"Klant & Zn" in pdf
+    assert b"Ander 9" not in pdf
+    assert b"voldoet aan de factuureisen" in pdf
+
+
+def test_credit_note_reverses_invoice_and_vat(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    customer = create_customer(client)
+    invoice = create_invoice(client, customer["id"], "2026-001")
+
+    credit = client.post(f"/api/invoices/{invoice['id']}/credit", json={"reason": "Dubbel gefactureerd"})
+    assert credit.status_code == 201, credit.text
+    body = credit.json()
+    assert body["kind"] == "credit"
+    assert body["credited_invoice_id"] == invoice["id"]
+    assert body["number"] == "2026-002"
+    assert body["total_cents"] == -invoice["total_cents"]
+    assert body["lines"][0]["vat_cents"] == -invoice["lines"][0]["vat_cents"]
+
+    original = client.get(f"/api/invoices/{invoice['id']}").json()
+    assert original["status"] == "credited"
+    assert client.patch(f"/api/invoices/{invoice['id']}", json={"status": "paid"}).status_code == 409
+    assert client.post(f"/api/invoices/{invoice['id']}/credit", json={}).status_code == 409
+    assert client.post(f"/api/invoices/{body['id']}/credit", json={}).status_code == 409
+
+    current = client.get("/api/vat").json()["current"]
+    assert current["vat_cents"] == 0 and current["net_cents"] == 0
+
+    pdf = client.get(f"/api/invoices/{body['id']}/pdf")
+    assert "creditfactuur-2026-002.pdf" in pdf.headers["content-disposition"]
+    assert b"CREDITFACTUUR" in pdf.content
+    assert b"Creditering van factuur 2026-001" in pdf.content
+    assert b"-242,00" in pdf.content
+
+
+def test_vat_treatments_need_the_right_data_and_land_in_the_right_rubric(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    local = create_customer(client, "Aannemer NL")
+    today = date.today()
+
+    standard_rate = client.post(
+        "/api/invoices",
+        json=invoice_payload(local["id"], "V-1", today, "0.21", vat_treatment="reverse_charge"),
+    )
+    assert standard_rate.status_code == 422
+    no_vat_id = client.post(
+        "/api/invoices",
+        json=invoice_payload(local["id"], "V-1", today, "0", vat_treatment="reverse_charge"),
+    )
+    assert no_vat_id.status_code == 422 and "btw-nummer" in no_vat_id.json()["detail"]
+    client.patch(f"/api/customers/{local['id']}", json={"name": "Aannemer NL", "vat_number": "NL000099998B57", "street": "Dam 2", "postal_code": "1012 JS", "city": "Amsterdam"})
+    reverse = client.post(
+        "/api/invoices",
+        json=invoice_payload(local["id"], "V-1", today, "0", vat_treatment="reverse_charge"),
+    )
+    assert reverse.status_code == 201
+
+    domestic_eu = client.post(
+        "/api/invoices",
+        json=invoice_payload(local["id"], "V-2", today, "0", vat_treatment="intra_eu"),
+    )
+    assert domestic_eu.status_code == 422
+    german = client.post(
+        "/api/customers",
+        json={"name": "GmbH", "street": "Hauptstr. 1", "postal_code": "10115", "city": "Berlin", "country": "Duitsland", "vat_number": "DE123456789"},
+    ).json()
+    assert client.post(
+        "/api/invoices",
+        json=invoice_payload(german["id"], "V-2", today, "0", vat_treatment="intra_eu"),
+    ).status_code == 201
+    create_invoice(client, local["id"], "V-3", "0.09")
+
+    receipt = client.post(
+        "/api/receipts",
+        data={"vendor": "Winkel", "receipt_date": today.isoformat(), "amount": "121.00", "vat_amount": "21.00", "category": "Kantoor"},
+        files={"file": ("bon.png", b"\x89PNG\r\n", "image/png")},
+    )
+    assert receipt.status_code == 201 and receipt.json()["vat_cents"] == 2100
+    too_much = client.post(
+        "/api/receipts",
+        data={"vendor": "Winkel", "receipt_date": today.isoformat(), "amount": "10", "vat_amount": "11", "category": "Kantoor"},
+        files={"file": ("bon.png", b"\x89PNG\r\n", "image/png")},
+    )
+    assert too_much.status_code == 422
+
+    current = client.get("/api/vat").json()["current"]
+    rubrics = {r["code"]: r for r in current["rubrics"]}
+    assert rubrics["1e"]["net_cents"] == 10000
+    assert rubrics["3b"]["net_cents"] == 10000
+    assert rubrics["1b"]["net_cents"] == 20000 and rubrics["1b"]["vat_cents"] == 1800
+    assert current["input_vat_cents"] == 2100
+    assert current["payable_cents"] == 1800 - 2100
+
+    pdf = client.get(f"/api/invoices/{reverse.json()['id']}/pdf").content
+    assert b"Btw verlegd" in pdf and b"NL000099998B57" in pdf
+
+
+def test_kor_invoices_carry_the_exemption_and_skip_vat(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    client.patch(
+        "/api/auth/me",
+        json={"company_name": "Studio Veer", "kvk_number": "12345678", "street": "Prinsengracht 1", "postal_code": "1015 DV", "city": "Amsterdam", "vat_scheme": "kor"},
+    )
+    customer = create_customer(client)
+    assert client.post("/api/invoices", json=invoice_payload(customer["id"], "K-1", date.today(), "0.21")).status_code == 422
+    invoice = client.post("/api/invoices", json=invoice_payload(customer["id"], "K-1", date.today(), "0"))
+    assert invoice.status_code == 201 and invoice.json()["vat_treatment"] == "kor"
+    pdf = client.get(f"/api/invoices/{invoice.json()['id']}/pdf").content
+    assert b"kleineondernemersregeling" in pdf
+    current = client.get("/api/vat").json()["current"]
+    assert current["kor"] is True and current["payable_cents"] == 0
 
 
 def test_registration_requires_terms_and_valid_email(tmp_path):

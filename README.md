@@ -46,15 +46,26 @@ verwijderen van een account en de migratie van een oud databaseschema.
   geldig), sessie-invalidatie op alle apparaten na een wachtwoordwijziging.
 - **Dashboard** — omzet van dit jaar, openstaand en te laat, zesmaandsgrafiek,
   nieuwste facturen en waarschuwingen.
-- **Facturen** — aanmaken met meerdere regels en btw per regel, doorlopende
-  nummerreeks met eigen voorvoegsel, leverdatum en opmerking, filteren, zoeken,
-  detailvenster, betaald/onbetaald, CSV-export, **PDF die voldoet aan de
-  factuureisen** en **verzenden per e-mail met de PDF als bijlage**.
+- **Facturen** — aanmaken met meerdere regels en btw per regel (21%, 9% of 0%),
+  doorlopende nummerreeks met eigen voorvoegsel, leverdatum en opmerking,
+  filteren, zoeken, detailvenster, betaald/onbetaald, CSV-export, **PDF die
+  voldoet aan de factuureisen** en **verzenden per e-mail met de PDF als
+  bijlage**. Een factuur kan pas worden opgeslagen als alle verplichte gegevens
+  er zijn; bedrijfs- en klantgegevens worden bij het aanmaken vastgelegd, zodat
+  latere wijzigingen een uitgereikte factuur niet veranderen.
+- **Creditfacturen** — een factuur wordt nooit gewijzigd of verwijderd; je
+  crediteert hem volledig met één klik en maakt zo nodig een nieuwe.
+- **Btw-behandelingen** — normaal, btw verlegd (binnenland), intracommunautaire
+  prestatie, uitvoer buiten de EU en de kleineondernemersregeling, elk met de
+  verplichte tekst op de factuur.
 - **Klanten** — toevoegen, bewerken, verwijderen (geblokkeerd zolang er facturen
-  zijn), adres en btw-nummer voor op de factuur, openstaand bedrag per klant.
-- **Bonnetjes** — uploaden (JPG/PNG/WEBP/PDF), bekijken, verwijderen.
-- **Btw & aangifte** — btw per tarief en per kwartaal uit je eigen factuurregels,
-  met deadline en interne afvinkmogelijkheid.
+  zijn), adres, land en btw-nummer voor op de factuur, openstaand bedrag per klant.
+- **Bonnetjes** — uploaden (JPG/PNG/WEBP/PDF) met btw-bedrag (voorbelasting),
+  bekijken, verwijderen.
+- **Btw & aangifte** — per kwartaal ingedeeld naar de rubrieken van de aangifte
+  (1a, 1b, 1e, 3a, 3b, 5a, 5b), met voorbelasting en het te betalen of terug te
+  vragen saldo. Een kwartaal vink je af nadat het voorbij is en je aangifte hebt
+  gedaan; daarna zijn facturen en bonnen in dat kwartaal vergrendeld.
 - **Instellingen** — bedrijfsgegevens, adres, IBAN, betalingstermijn,
   factuurvoorvoegsel, meldingsvoorkeuren, wachtwoord, recente activiteit,
   volledige gegevensexport en accountverwijdering.
@@ -159,9 +170,12 @@ een nieuwe lettertypefamilie toe te voegen.
 
 ## Grenzen en volgende stappen
 
-- **Aangifte**: het btw-overzicht is een hulpmiddel op basis van je eigen
-  facturen. Het bevat geen voorbelasting of correcties en dient niet in bij de
-  Belastingdienst; direct indienen vraagt een SBR/Digipoort-certificaat.
+- **Aangifte**: het btw-overzicht volgt het factuurstelsel (factuurdatum) en
+  bevat geen naar jou verlegde btw (rubriek 2a/4), privégebruik of suppleties.
+  Het dient niet zelf in bij de Belastingdienst; direct indienen vraagt een
+  SBR/Digipoort-certificaat.
+- **Gedeeltelijk crediteren** kan niet: crediteer volledig en maak een nieuwe
+  factuur.
 - **Bankkoppeling**: er is geen PSD2-koppeling. De bankpagina zegt dat eerlijk en
   toont geen verzonnen transacties.
 - **OCR**: bonnetjes worden bewaard maar niet automatisch uitgelezen.

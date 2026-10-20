@@ -87,6 +87,31 @@
         <label class="field-label" for="customer-email">E-mail</label>
         <input id="customer-email" class="field-control" type="email" placeholder="lisa@havenlicht.nl" maxlength="320">
       </div>
+      <div class="field-group" style="margin-top:18px">
+        <label class="field-label" for="customer-street">Straat en huisnummer</label>
+        <input id="customer-street" class="field-control" type="text" placeholder="Havenstraat 12" maxlength="200">
+        <div class="field-hint">Het adres van je klant is verplicht op een factuur.</div>
+      </div>
+      <div class="field-row">
+        <div>
+          <label class="field-label" for="customer-postal">Postcode</label>
+          <input id="customer-postal" class="field-control" type="text" placeholder="1013 AB" maxlength="20">
+        </div>
+        <div>
+          <label class="field-label" for="customer-city">Plaats</label>
+          <input id="customer-city" class="field-control" type="text" placeholder="Amsterdam" maxlength="120">
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <label class="field-label" for="customer-country">Land</label>
+          <input id="customer-country" class="field-control" type="text" placeholder="Nederland" maxlength="120">
+        </div>
+        <div>
+          <label class="field-label" for="customer-vat">Btw-nummer klant (optioneel)</label>
+          <input id="customer-vat" class="field-control" type="text" placeholder="NL123456789B01" maxlength="20">
+        </div>
+      </div>
       <p class="form-note" id="customer-dialog-feedback" role="status" aria-live="polite"></p>
     </div>
     <div class="modal-foot">
@@ -166,6 +191,11 @@
     document.getElementById('customer-contact').value = customer ? (customer.contact || '') : '';
     document.getElementById('customer-email').value = customer ? (customer.email || '') : '';
     document.getElementById('customer-phone').value = customer ? (customer.phone || '') : '';
+    document.getElementById('customer-street').value = customer ? (customer.street || '') : '';
+    document.getElementById('customer-postal').value = customer ? (customer.postal_code || '') : '';
+    document.getElementById('customer-city').value = customer ? (customer.city || '') : '';
+    document.getElementById('customer-country').value = customer ? (customer.country || 'Nederland') : 'Nederland';
+    document.getElementById('customer-vat').value = customer ? (customer.vat_number || '') : '';
     note(dialogFeedback, '');
     if (!dialog.open) dialog.showModal();
     document.getElementById('customer-name').focus();
@@ -186,7 +216,7 @@
       customers = customerData;
       openByCustomer = new Map();
       invoices.forEach(invoice => {
-        if (statusOf(invoice) === 'paid') return;
+        if (!Kasflow.isOpen(invoice)) return;
         openByCustomer.set(invoice.customer_id, (openByCustomer.get(invoice.customer_id) || 0) + invoice.total_cents);
       });
       const openCents = [...openByCustomer.values()].reduce((sum, value) => sum + value, 0);
@@ -213,7 +243,12 @@
       name,
       contact: document.getElementById('customer-contact').value.trim() || null,
       email: document.getElementById('customer-email').value.trim() || null,
-      phone: document.getElementById('customer-phone').value.trim() || null
+      phone: document.getElementById('customer-phone').value.trim() || null,
+      street: document.getElementById('customer-street').value.trim() || null,
+      postal_code: document.getElementById('customer-postal').value.trim() || null,
+      city: document.getElementById('customer-city').value.trim() || null,
+      country: document.getElementById('customer-country').value.trim() || 'Nederland',
+      vat_number: document.getElementById('customer-vat').value.trim().replaceAll(' ', '').toUpperCase() || null
     };
     const saveButton = document.getElementById('customer-save');
     setBusy(saveButton, true, 'Opslaan…');

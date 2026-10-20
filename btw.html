@@ -36,39 +36,47 @@
     </div>
 
     <div class="alert warning">
-      <div><strong>Hulpmiddel, geen officiële aangifte.</strong> De bedragen komen uit de btw op je eigen facturen.
-      Voorbelasting, correcties, verlegde btw en jaarregels zijn hier niet in meegenomen. Laat een aangifte altijd controleren
-      door je boekhouder voordat je indient.</div>
+      <div><strong>Hulpmiddel voor je aangifte.</strong> De bedragen komen uit je facturen (factuurdatum) en de btw op je bonnetjes.
+      Btw die naar jou is verlegd (rubriek 2a/4), privégebruik en suppleties staan hier niet in. Je dient de aangifte zelf in
+      via Mijn Belastingdienst Zakelijk; in de aangifte vul je hele euro's in.</div>
     </div>
 
     <p id="vat-feedback" class="form-note" role="status" aria-live="polite"></p>
 
     <div class="metric-grid">
       <div class="metric-card accent">
-        <div class="metric-label">Btw over je facturen dit kwartaal</div>
+        <div class="metric-label" id="vat-due-label">Te betalen</div>
         <div class="metric-value" id="vat-due">—</div>
-        <div class="metric-meta" id="vat-due-meta">Berekend uit je facturen</div>
+        <div class="metric-meta" id="vat-due-meta">—</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Omzet excl. btw dit kwartaal</div>
-        <div class="metric-value" id="vat-net">—</div>
-        <div class="metric-meta" id="vat-net-meta">—</div>
+        <div class="metric-label">Btw op je facturen − voorbelasting</div>
+        <div class="metric-value" id="vat-split">—</div>
+        <div class="metric-meta" id="vat-split-meta">—</div>
       </div>
       <div class="metric-card">
         <div class="metric-label">Status van dit kwartaal</div>
         <div class="metric-value" id="vat-status">—</div>
-        <div class="metric-meta" id="vat-status-meta">Nog niet goedgekeurd</div>
+        <div class="metric-meta" id="vat-status-meta">—</div>
       </div>
     </div>
 
     <section class="panel">
       <div class="panel-head">
-        <h2 id="rate-title">Btw per tarief</h2>
+        <h2 id="rate-title">Aangifte omzetbelasting</h2>
         <span class="pill muted" id="rate-period">—</span>
       </div>
-      <div class="rate-list" id="rate-list"></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Rubriek</th><th>Omschrijving</th><th style="text-align:right">Omzet</th><th style="text-align:right">Btw</th></tr>
+          </thead>
+          <tbody id="rubric-body"></tbody>
+        </table>
+      </div>
+      <p class="vat-disclaimer" id="vat-extra"></p>
       <p class="vat-disclaimer">Deadline voor deze periode: <strong id="rate-deadline">—</strong>.
-      Zorg dat je je administratie rond hebt voordat je aangifte doet.</p>
+      Zorg dat je administratie rond is voordat je aangifte doet.</p>
     </section>
 
     <section class="panel">
@@ -78,7 +86,7 @@
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>Periode</th><th>Facturen</th><th style="text-align:right">Omzet excl. btw</th><th style="text-align:right">Btw</th><th>Deadline</th><th>Status</th></tr>
+            <tr><th>Periode</th><th>Facturen</th><th style="text-align:right">Btw facturen</th><th style="text-align:right">Voorbelasting</th><th style="text-align:right">Saldo</th><th>Deadline</th><th>Status</th><th></th></tr>
           </thead>
           <tbody id="vat-table-body"></tbody>
         </table>
@@ -97,64 +105,101 @@
   const summary = document.getElementById('vat-summary');
   const approveButton = document.getElementById('approve-button');
   let overview = null;
+  let selected = 0;
 
-  function rateLabel(rateBps) {
-    return (rateBps / 100).toLocaleString('nl-NL', { maximumFractionDigits: 2 }) + '%';
+  // The return to file now is the last finished quarter, until its deadline passes.
+  function defaultSelection(quarters) {
+    const previous = quarters[1];
+    return previous && !previous.approved_at && Kasflow.todayIso() <= previous.deadline ? 1 : 0;
+  }
+
+  function balanceText(cents) {
+    return cents < 0 ? money(-cents) + ' terug' : money(cents);
   }
 
   function render() {
-    const current = overview.current;
+    const quarter = overview.quarters[selected];
+    const refund = quarter.payable_cents < 0;
 
-    document.getElementById('vat-due').textContent = money(current.vat_cents);
-    document.getElementById('vat-due-meta').textContent = current.invoice_count
-      ? 'Uit ' + current.invoice_count + (current.invoice_count === 1 ? ' factuur' : ' facturen') + ' in ' + current.label
-      : 'Nog geen facturen in ' + current.label;
-    document.getElementById('vat-net').textContent = money(current.net_cents);
-    document.getElementById('vat-net-meta').textContent = current.label + ' · ' +
-      formatShortDate(current.start_date) + ' t/m ' + formatShortDate(current.end_date);
+    document.getElementById('vat-due-label').textContent = quarter.kor
+      ? 'Kleineondernemersregeling'
+      : (refund ? 'Terug te vragen' : 'Te betalen') + ' over ' + quarter.label;
+    document.getElementById('vat-due').textContent = quarter.kor ? '€ 0,00' : money(Math.abs(quarter.payable_cents));
+    document.getElementById('vat-due-meta').textContent = quarter.kor
+      ? 'Je hoeft onder de KOR geen aangifte te doen'
+      : quarter.invoice_count + (quarter.invoice_count === 1 ? ' factuur' : ' facturen') + ' en ' +
+        quarter.receipt_count + (quarter.receipt_count === 1 ? ' bon' : ' bonnen');
+    document.getElementById('vat-split').textContent = money(quarter.vat_cents) + ' − ' + money(quarter.input_vat_cents);
+    document.getElementById('vat-split-meta').textContent = quarter.label + ' · ' +
+      formatShortDate(quarter.start_date) + ' t/m ' + formatShortDate(quarter.end_date);
 
-    const approved = Boolean(current.approved_at);
+    const approved = Boolean(quarter.approved_at);
     document.getElementById('vat-status').innerHTML = approved
-      ? '<span class="status-ok">Goedgekeurd</span>'
-      : '<span class="status-concept">Concept</span>';
+      ? '<span class="status-ok">Afgevinkt</span>'
+      : '<span class="status-concept">' + (quarter.closed ? 'Klaar voor aangifte' : 'Loopt nog') + '</span>';
     document.getElementById('vat-status-meta').textContent = approved
-      ? 'Goedgekeurd op ' + formatShortDate(current.approved_on || current.approved_at)
-      : 'Nog niet goedgekeurd';
-    approveButton.disabled = current.invoice_count === 0;
-    approveButton.textContent = approved ? 'Goedkeuring intrekken' : 'Concept goedkeuren';
+      ? 'Afgevinkt op ' + formatShortDate(quarter.approved_on || quarter.approved_at) + '; facturen en bonnen in dit kwartaal zijn vergrendeld'
+      : quarter.closed ? 'Vink af nadat je de aangifte hebt ingediend' : 'Afvinken kan na ' + formatShortDate(quarter.end_date);
+    approveButton.disabled = !approved && !quarter.closed;
+    approveButton.textContent = approved ? 'Afvinking intrekken' : 'Aangifte gedaan, afvinken';
 
-    document.getElementById('rate-period').textContent = current.label;
-    document.getElementById('rate-title').textContent = 'Btw per tarief — ' + current.label;
-    document.getElementById('rate-deadline').textContent = formatShortDate(current.deadline);
+    document.getElementById('rate-period').textContent = quarter.label;
+    document.getElementById('rate-title').textContent = 'Aangifte omzetbelasting — ' + quarter.label;
+    document.getElementById('rate-deadline').textContent = formatShortDate(quarter.deadline);
 
-    document.getElementById('rate-list').innerHTML = current.rates.length
-      ? current.rates.map(rate =>
-          '<div class="rate-row"><span class="rate-name">' + rateLabel(rate.rate_bps) + ' · omzet ' + money(rate.net_cents) + '</span>' +
-          '<span class="rate-value">' + money(rate.vat_cents) + '</span></div>'
-        ).join('')
-      : '<div class="empty-state" style="padding:22px"><h3>Nog geen btw in dit kwartaal</h3><p>Maak een factuur aan; daarna zie je hier per tarief hoeveel btw je hebt gefactureerd.</p><a class="btn btn-primary btn-sm" href="factuur.html">Nieuwe factuur</a></div>';
-
-    document.getElementById('vat-table-body').innerHTML = overview.quarters.map(quarter =>
+    const rubricRows = quarter.rubrics.map(rubric =>
       '<tr>' +
-      '<td data-label="Periode" class="row-name">' + escapeHtml(quarter.label) + '</td>' +
-      '<td data-label="Facturen">' + quarter.invoice_count + '</td>' +
-      '<td data-label="Omzet excl. btw" class="amount" style="text-align:right">' + money(quarter.net_cents) + '</td>' +
-      '<td data-label="Btw" class="amount" style="text-align:right">' + money(quarter.vat_cents) + '</td>' +
-      '<td data-label="Deadline">' + formatShortDate(quarter.deadline) + '</td>' +
-      '<td data-label="Status">' + (quarter.approved_at
-        ? '<span class="badge paid"><span class="dot" aria-hidden="true"></span>Goedgekeurd</span>'
-        : '<span class="badge pending"><span class="dot" aria-hidden="true"></span>Concept</span>') + '</td>' +
+      '<td data-label="Rubriek" class="row-name">' + escapeHtml(rubric.code) + '</td>' +
+      '<td data-label="Omschrijving">' + escapeHtml(rubric.label) + '</td>' +
+      '<td data-label="Omzet" class="amount" style="text-align:right">' + money(rubric.net_cents) + '</td>' +
+      '<td data-label="Btw" class="amount" style="text-align:right">' + (['1a', '1b', '1c'].includes(rubric.code) ? money(rubric.vat_cents) : '') + '</td>' +
+      '</tr>'
+    );
+    rubricRows.push(
+      '<tr><td data-label="Rubriek" class="row-name">5a</td><td data-label="Omschrijving">Verschuldigde omzetbelasting</td><td></td>' +
+      '<td data-label="Btw" class="amount" style="text-align:right">' + money(quarter.vat_cents) + '</td></tr>',
+      '<tr><td data-label="Rubriek" class="row-name">5b</td><td data-label="Omschrijving">Voorbelasting (btw op je bonnetjes)</td><td></td>' +
+      '<td data-label="Btw" class="amount" style="text-align:right">' + money(quarter.input_vat_cents) + '</td></tr>',
+      '<tr><td data-label="Rubriek" class="row-name">5c</td><td data-label="Omschrijving"><strong>' + (refund ? 'Terug te vragen' : 'Te betalen') + '</strong></td><td></td>' +
+      '<td data-label="Btw" class="amount" style="text-align:right"><strong>' + money(Math.abs(quarter.payable_cents)) + '</strong></td></tr>'
+    );
+    document.getElementById('rubric-body').innerHTML = rubricRows.join('');
+
+    const extra = [];
+    const intraEu = quarter.rubrics.find(rubric => rubric.code === '3b');
+    if (intraEu && intraEu.net_cents) extra.push('Je hebt omzet in rubriek 3b: doe ook de opgaaf intracommunautaire prestaties (ICP).');
+    const exported = quarter.rubrics.find(rubric => rubric.code === '3a');
+    if (exported && exported.net_cents) extra.push('Rubriek 3a is voor goederen. Diensten aan ondernemers buiten de EU neem je niet op in de aangifte.');
+    if (quarter.kor) extra.push('Onder de KOR trek je geen voorbelasting af.');
+    document.getElementById('vat-extra').textContent = extra.join(' ');
+
+    document.getElementById('vat-table-body').innerHTML = overview.quarters.map((item, index) =>
+      '<tr' + (index === selected ? ' class="row-selected"' : '') + '>' +
+      '<td data-label="Periode" class="row-name">' + escapeHtml(item.label) + '</td>' +
+      '<td data-label="Facturen">' + item.invoice_count + '</td>' +
+      '<td data-label="Btw facturen" class="amount" style="text-align:right">' + money(item.vat_cents) + '</td>' +
+      '<td data-label="Voorbelasting" class="amount" style="text-align:right">' + money(item.input_vat_cents) + '</td>' +
+      '<td data-label="Saldo" class="amount" style="text-align:right">' + balanceText(item.payable_cents) + '</td>' +
+      '<td data-label="Deadline">' + formatShortDate(item.deadline) + '</td>' +
+      '<td data-label="Status">' + (item.approved_at
+        ? '<span class="badge paid"><span class="dot" aria-hidden="true"></span>Afgevinkt</span>'
+        : item.closed
+          ? '<span class="badge pending"><span class="dot" aria-hidden="true"></span>Open</span>'
+          : '<span class="badge credited"><span class="dot" aria-hidden="true"></span>Loopt nog</span>') + '</td>' +
+      '<td class="cell-actions">' + (index === selected ? '' :
+        '<button type="button" class="btn btn-outline btn-sm" data-quarter="' + index + '">Bekijken</button>') + '</td>' +
       '</tr>'
     ).join('');
 
-    summary.textContent = current.invoice_count
-      ? current.label + ': ' + money(current.vat_cents) + ' btw over ' + money(current.net_cents) + ' omzet.'
-      : current.label + ': nog geen facturen.';
+    summary.textContent = quarter.kor
+      ? quarter.label + ': je valt onder de kleineondernemersregeling.'
+      : quarter.label + ': ' + balanceText(quarter.payable_cents) + ' (deadline ' + formatShortDate(quarter.deadline) + ').';
   }
 
   async function loadVat() {
     try {
       overview = await api('/api/vat');
+      selected = defaultSelection(overview.quarters);
       render();
     } catch (error) {
       note(feedback, error.message, 'error');
@@ -162,29 +207,31 @@
     }
   }
 
+  document.getElementById('vat-table-body').addEventListener('click', event => {
+    const trigger = event.target.closest('[data-quarter]');
+    if (!trigger) return;
+    selected = Number(trigger.dataset.quarter);
+    note(feedback, '');
+    render();
+  });
+
   approveButton.addEventListener('click', async () => {
     if (!overview) return;
-    const current = overview.current;
-    const approved = Boolean(current.approved_at);
-    setBusy(approveButton, true, approved ? 'Intrekken…' : 'Goedkeuren…');
+    const quarter = overview.quarters[selected];
+    const approved = Boolean(quarter.approved_at);
+    setBusy(approveButton, true, approved ? 'Intrekken…' : 'Afvinken…');
     try {
       if (approved) {
-        await api('/api/vat/approval?year=' + current.year + '&quarter=' + current.quarter, { method: 'DELETE' });
-        overview.current.approved_at = null;
-        overview.current.approved_on = null;
-        overview.quarters[0].approved_at = null;
-        overview.quarters[0].approved_on = null;
-        note(feedback, 'Goedkeuring van ' + current.label + ' is ingetrokken.', 'success');
+        await api('/api/vat/approval?year=' + quarter.year + '&quarter=' + quarter.quarter, { method: 'DELETE' });
+        note(feedback, 'Afvinking van ' + quarter.label + ' is ingetrokken.', 'success');
       } else {
-        const updated = await api('/api/vat/approve', {
+        await api('/api/vat/approve', {
           method: 'POST',
-          body: { year: current.year, quarter: current.quarter }
+          body: { year: quarter.year, quarter: quarter.quarter }
         });
-        overview.current = updated;
-        overview.quarters[0] = updated;
-        note(feedback, current.label + ' is goedgekeurd. Je kunt dit later nog aanpassen.', 'success');
+        note(feedback, quarter.label + ' is afgevinkt. Facturen en bonnen in dit kwartaal zijn nu vergrendeld.', 'success');
       }
-      render();
+      overview = await api('/api/vat');
     } catch (error) {
       note(feedback, error.message, 'error');
     } finally {

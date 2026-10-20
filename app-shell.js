@@ -352,11 +352,17 @@
 
   function statusOf(invoice) {
     if (invoice.status === 'paid') return 'paid';
+    if (invoice.status === 'credited') return 'credited';
     const due = invoice.due_date || invoice.dueDate;
     return due && due < todayIso() ? 'overdue' : 'pending';
   }
 
-  const STATUS_LABELS = { paid: 'Betaald', pending: 'Openstaand', overdue: 'Te laat' };
+  function isOpen(invoice) {
+    const status = statusOf(invoice);
+    return status === 'pending' || status === 'overdue';
+  }
+
+  const STATUS_LABELS = { paid: 'Betaald', pending: 'Openstaand', overdue: 'Te laat', credited: 'Gecrediteerd' };
 
   function statusBadge(status) {
     const safe = STATUS_LABELS[status] ? status : 'pending';
@@ -467,6 +473,7 @@
     },
     todayIso,
     statusOf,
+    isOpen,
     statusLabel: status => STATUS_LABELS[status] || STATUS_LABELS.pending,
     statusBadge,
     note,

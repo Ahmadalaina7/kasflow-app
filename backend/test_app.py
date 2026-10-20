@@ -50,13 +50,32 @@ def register(client, email="sanne@example.nl", company_name="Studio Veer"):
         },
     )
     assert response.status_code == 201, response.text
+    complete_profile(client, company_name)
     return response.json()
+
+
+def complete_profile(client, company_name="Studio Veer"):
+    response = client.patch(
+        "/api/auth/me",
+        json={
+            "company_name": company_name,
+            "kvk_number": "12345678",
+            "vat_number": "NL123456789B01",
+            "street": "Prinsengracht 1",
+            "postal_code": "1015 DV",
+            "city": "Amsterdam",
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+ADDRESS = {"street": "Dam 2", "postal_code": "1012 JS", "city": "Amsterdam"}
 
 
 def create_customer(client, name="Studio Veer"):
     response = client.post(
         "/api/customers",
-        json={"name": name, "email": "sanne@example.nl"},
+        json={"name": name, "email": "sanne@example.nl", **ADDRESS},
     )
     assert response.status_code == 201
     return response.json()
@@ -95,7 +114,7 @@ def test_customer_and_invoice_are_persisted_and_amounts_are_rounded(tmp_path):
 
     customer_response = client.post(
         "/api/customers",
-        json={"name": "  Studio Veer  ", "email": "sanne@example.nl"},
+        json={"name": "  Studio Veer  ", "email": "sanne@example.nl", **ADDRESS},
     )
     assert customer_response.status_code == 201
     customer = customer_response.json()
@@ -317,23 +336,28 @@ def test_invoice_status_and_vat_overview(tmp_path):
     current = overview.json()["current"]
     assert current["net_cents"] == 20000
     assert current["vat_cents"] == 4200
+    assert current["payable_cents"] == 4200
     assert current["rates"][0]["rate_bps"] == 2100
+    assert {r["code"]: r["vat_cents"] for r in current["rubrics"]}["1a"] == 4200
     assert current["approved_at"] is None
+    assert current["closed"] is False
 
-    approved = client.post(
+    running = client.post(
         "/api/vat/approve",
         json={"year": current["year"], "quarter": current["quarter"]},
     )
+    assert running.status_code == 422
+
+    previous = overview.json()["quarters"][1]
+    period = {"year": previous["year"], "quarter": previous["quarter"]}
+    approved = client.post("/api/vat/approve", json=period)
     assert approved.status_code == 200
     assert approved.json()["approved_at"] is not None
-    assert client.get("/api/vat").json()["current"]["approved_at"] is not None
+    assert client.get("/api/vat").json()["quarters"][1]["approved_at"] is not None
 
-    revoked = client.delete(
-        "/api/vat/approval",
-        params={"year": current["year"], "quarter": current["quarter"]},
-    )
+    revoked = client.delete("/api/vat/approval", params=period)
     assert revoked.status_code == 204
-    assert client.get("/api/vat").json()["current"]["approved_at"] is None
+    assert client.get("/api/vat").json()["quarters"][1]["approved_at"] is None
 
 
 def test_receipts_can_be_uploaded_downloaded_and_deleted(tmp_path):

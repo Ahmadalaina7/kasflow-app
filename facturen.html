@@ -98,6 +98,7 @@
   <div class="modal-foot">
     <button type="button" class="btn btn-outline" id="detail-close">Sluiten</button>
     <a class="btn btn-outline" id="detail-pdf" href="#">Download PDF</a>
+    <button type="button" class="btn btn-outline" id="detail-credit">Crediteren</button>
     <button type="button" class="btn btn-outline" id="detail-send">Verstuur per e-mail</button>
     <button type="button" class="btn btn-primary" id="detail-status-button">Markeer als betaald</button>
   </div>
@@ -108,7 +109,7 @@
 (function () {
   'use strict';
 
-  const { api, money, formatShortDate, statusOf, statusBadge, note, escapeHtml, setBusy } = Kasflow;
+  const { api, money, formatShortDate, statusOf, isOpen, statusBadge, note, escapeHtml, setBusy } = Kasflow;
   const pills = [...document.querySelectorAll('.filter-pill')];
   const searchInput = document.getElementById('invoice-search');
   const tableBody = document.getElementById('invoice-table-body');
@@ -133,14 +134,14 @@
   }
 
   function updateCounts() {
-    const counts = { all: invoices.length, paid: 0, pending: 0, overdue: 0 };
+    const counts = { all: invoices.length, paid: 0, pending: 0, overdue: 0, credited: 0 };
     invoices.forEach(invoice => { counts[statusOf(invoice)] += 1; });
     pills.forEach(pill => {
       const label = { all: 'Alle', paid: 'Betaald', pending: 'Openstaand', overdue: 'Te laat' }[pill.dataset.filter];
       pill.textContent = label + ' (' + counts[pill.dataset.filter] + ')';
     });
     const openCents = invoices
-      .filter(invoice => statusOf(invoice) !== 'paid')
+      .filter(isOpen)
       .reduce((sum, invoice) => sum + invoice.total_cents, 0);
     summary.textContent = invoices.length
       ? invoices.length + (invoices.length === 1 ? ' factuur' : ' facturen') + ' — ' + money(openCents) + ' staat open.'
@@ -182,7 +183,8 @@
       const row = tableBody.insertRow();
       row.innerHTML =
         '<td data-label="Klant" class="row-name">' + escapeHtml(customerNames.get(invoice.customer_id)) + '</td>' +
-        '<td data-label="Nummer" class="row-sub">' + escapeHtml(invoice.number) + '</td>' +
+        '<td data-label="Nummer" class="row-sub">' + escapeHtml(invoice.number) +
+        (invoice.kind === 'credit' ? ' · creditfactuur' : '') + '</td>' +
         '<td data-label="Factuurdatum">' + formatShortDate(invoice.invoice_date) + '</td>' +
         '<td data-label="Vervaldatum">' + formatShortDate(invoice.due_date) + '</td>' +
         '<td data-label="Status">' + statusBadge(status) + '</td>' +
@@ -196,9 +198,15 @@
     if (!invoice) return;
     activeInvoice = invoice;
     note(document.getElementById('detail-feedback'), '');
-    document.getElementById('invoice-dialog-title').textContent = 'Factuur ' + invoice.number;
+    const isCredit = invoice.kind === 'credit';
+    document.getElementById('invoice-dialog-title').textContent =
+      (isCredit ? 'Creditfactuur ' : 'Factuur ') + invoice.number;
+    const credited = isCredit ? invoices.find(item => item.id === invoice.credited_invoice_id) : null;
+    const creditNote = invoices.find(item => item.credited_invoice_id === invoice.id);
     document.getElementById('invoice-dialog-sub').textContent =
-      customerNames.get(invoice.customer_id) + ' · ' + money(invoice.total_cents);
+      customerNames.get(invoice.customer_id) + ' · ' + money(invoice.total_cents) +
+      (credited ? ' · crediteert ' + credited.number : '') +
+      (creditNote ? ' · gecrediteerd met ' + creditNote.number : '');
     document.getElementById('detail-invoice-date').textContent = formatShortDate(invoice.invoice_date);
     document.getElementById('detail-due-date').textContent = formatShortDate(invoice.due_date);
     document.getElementById('detail-status').innerHTML = statusBadge(statusOf(invoice));
@@ -222,7 +230,9 @@
     document.getElementById('detail-subtotal').textContent = money(invoice.subtotal_cents);
     document.getElementById('detail-vat').textContent = money(invoice.vat_cents);
     document.getElementById('detail-total').textContent = money(invoice.total_cents);
+    document.getElementById('detail-credit').hidden = isCredit || invoice.status === 'credited';
     const statusButton = document.getElementById('detail-status-button');
+    statusButton.hidden = invoice.status === 'credited';
     statusButton.textContent = invoice.status === 'paid' ? 'Markeer als onbetaald' : 'Markeer als betaald';
     statusButton.dataset.originalLabel = statusButton.textContent;
     statusButton.dataset.nextStatus = invoice.status === 'paid' ? 'pending' : 'paid';
@@ -288,6 +298,40 @@
     }
   }
 
+  async function creditInvoice() {
+    if (!activeInvoice) return;
+    const button = document.getElementById('detail-credit');
+    const original = activeInvoice;
+    const reason = window.prompt(
+      'Factuur ' + original.number + ' volledig crediteren?\n\n' +
+      'Er wordt een creditfactuur met negatieve bedragen gemaakt. Een uitgereikte factuur pas je nooit zelf aan; ' +
+      'maak daarna zo nodig een nieuwe, juiste factuur.\n\nReden (komt op de creditfactuur):',
+      ''
+    );
+    if (reason === null) return;
+    setBusy(button, true, 'Crediteren…');
+    try {
+      const credit = await api('/api/invoices/' + original.id + '/credit', {
+        method: 'POST',
+        body: { reason: reason.trim() || null }
+      });
+      const updatedOriginal = await api('/api/invoices/' + original.id);
+      invoices = [credit, ...invoices.map(invoice => invoice.id === original.id ? updatedOriginal : invoice)];
+      updateCounts();
+      renderInvoices();
+      openInvoice(credit.id);
+      delete button.dataset.originalLabel;
+      note(document.getElementById('detail-feedback'),
+        'Creditfactuur ' + credit.number + ' is aangemaakt.' +
+        (original.status === 'paid' ? ' De klant had al betaald: stort ' + money(original.total_cents) + ' terug.' : ''),
+        'success');
+    } catch (error) {
+      note(document.getElementById('detail-feedback'), error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
   async function loadInvoices() {
     note(feedback, '');
     summary.textContent = 'Facturen laden…';
@@ -337,6 +381,7 @@
   document.getElementById('detail-close').addEventListener('click', closeDialog);
   document.getElementById('detail-status-button').addEventListener('click', toggleInvoiceStatus);
   document.getElementById('detail-send').addEventListener('click', sendInvoice);
+  document.getElementById('detail-credit').addEventListener('click', creditInvoice);
   dialog.addEventListener('click', event => {
     if (event.target === dialog) closeDialog();
   });
@@ -346,24 +391,27 @@
       note(feedback, 'Er zijn nog geen facturen om te exporteren.', 'warning');
       return;
     }
-    const rows = [
-      ['Klant', 'Factuurnummer', 'Factuurdatum', 'Vervaldatum', 'Status', 'Subtotaal', 'Btw', 'Totaal'],
+    const amount = cents => (cents / 100).toFixed(2).replace('.', ',');
+    const text = value => {
+      const raw = String(value == null ? '' : value);
+      const safe = /^[\s]*[=+\-@]/.test(raw) ? "'" + raw : raw;
+      return '"' + safe.replaceAll('"', '""') + '"';
+    };
+    const header = ['Soort', 'Klant', 'Factuurnummer', 'Factuurdatum', 'Vervaldatum', 'Status', 'Subtotaal', 'Btw', 'Totaal'];
+    const csv = [
+      header.map(text).join(';'),
       ...invoices.map(invoice => [
-        customerNames.get(invoice.customer_id) || 'Onbekende klant',
-        invoice.number,
-        invoice.invoice_date,
-        invoice.due_date,
-        Kasflow.statusLabel(statusOf(invoice)),
-        (invoice.subtotal_cents / 100).toFixed(2),
-        (invoice.vat_cents / 100).toFixed(2),
-        (invoice.total_cents / 100).toFixed(2)
-      ])
-    ];
-    const csv = rows.map(row => row.map(value => {
-      const text = String(value == null ? '' : value);
-      const safeValue = /^[\s]*[=+\-@]/.test(text) ? "'" + text : text;
-      return '"' + safeValue.replaceAll('"', '""') + '"';
-    }).join(';')).join('\r\n');
+        text(invoice.kind === 'credit' ? 'Creditfactuur' : 'Factuur'),
+        text(customerNames.get(invoice.customer_id) || 'Onbekende klant'),
+        text(invoice.number),
+        text(invoice.invoice_date),
+        text(invoice.due_date),
+        text(Kasflow.statusLabel(statusOf(invoice))),
+        amount(invoice.subtotal_cents),
+        amount(invoice.vat_cents),
+        amount(invoice.total_cents)
+      ].join(';'))
+    ].join('\r\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
     link.download = 'kasflow-facturen.csv';

@@ -29,6 +29,11 @@ BACKFILL_DEFAULTS: dict[str, tuple[str, object]] = {
     "notify_sms": ("0", 0),
     "notify_backup": ("1", 1),
     "country": ("'Nederland'", "Nederland"),
+    "vat_scheme": ("'standard'", "standard"),
+    "kind": ("'invoice'", "invoice"),
+    "vat_treatment": ("'standard'", "standard"),
+    "vat_cents": ("0", 0),
+    "input_vat_cents": ("0", 0),
 }
 
 INVOICE_COLUMNS = [
@@ -168,6 +173,8 @@ def rebuild_legacy_invoices(engine: Engine) -> bool:
 
 def run_migrations(engine: Engine, metadata: MetaData) -> None:
     added = add_missing_columns(engine, metadata)
+    # The rebuild only knows the legacy invoice columns, so add the newer ones again.
+    if rebuild_legacy_invoices(engine):
+        added += add_missing_columns(engine, metadata)
     if added:
         logger.info("Kolommen toegevoegd: %s", ", ".join(f"{t}.{c}" for t, c in added))
-    rebuild_legacy_invoices(engine)

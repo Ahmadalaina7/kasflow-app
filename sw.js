@@ -4,7 +4,7 @@
  * are never stored, so one account's data can never be served to another
  * account on a shared device. Navigations fall back to offline.html.
  */
-const VERSION = 'kasflow-v4';
+const VERSION = 'kasflow-v5';
 const SHELL = [
   'offline.html',
   'fonts.css',
@@ -54,18 +54,17 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Network first: pages and app-shell.js must come from the same deploy, so a
+  // cached copy is only used when the network is unavailable.
   event.respondWith(
-    caches.match(request).then(cached => {
-      const network = fetch(request)
-        .then(response => {
-          if (response.ok && response.type === 'basic') {
-            const copy = response.clone();
-            caches.open(VERSION).then(cache => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(request)
+      .then(response => {
+        if (response.ok && response.type === 'basic') {
+          const copy = response.clone();
+          caches.open(VERSION).then(cache => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request).then(cached => cached || Response.error()))
   );
 });

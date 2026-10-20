@@ -68,9 +68,10 @@ def link(public_url: str, path: str) -> str:
 
 def money(cents: int) -> str:
     """Format cents as Dutch currency: 123456 -> € 1.234,56."""
-    whole, rest = divmod(int(cents), 100)
+    sign = "-" if cents < 0 else ""
+    whole, rest = divmod(abs(int(cents)), 100)
     groups = f"{whole:,}".replace(",", ".")
-    return f"€ {groups},{rest:02d}"
+    return f"€ {sign}{groups},{rest:02d}"
 
 
 def _text_body(paragraphs: Iterable[str], signature: list[str]) -> str:
@@ -252,12 +253,21 @@ class Mailer:
         note: str,
         pdf_bytes: bytes,
         pdf_filename: str,
+        credit: bool = False,
     ) -> bool:
-        paragraphs = [
-            f"Hallo {customer_name},",
-            f"In de bijlage vind je factuur {invoice_number} van {sender_name} voor {money(total_cents)} inclusief btw.",
-            f"Je kunt het bedrag voor {due_date} overmaken onder vermelding van factuurnummer {invoice_number}.",
-        ]
+        document = "Creditfactuur" if credit else "Factuur"
+        if credit:
+            paragraphs = [
+                f"Hallo {customer_name},",
+                f"In de bijlage vind je creditfactuur {invoice_number} van {sender_name} voor {money(-total_cents)} inclusief btw.",
+                "Dit bedrag verrekenen we met je openstaande factuur of storten we terug als je die al hebt betaald.",
+            ]
+        else:
+            paragraphs = [
+                f"Hallo {customer_name},",
+                f"In de bijlage vind je factuur {invoice_number} van {sender_name} voor {money(total_cents)} inclusief btw.",
+                f"Je kunt het bedrag voor {due_date} overmaken onder vermelding van factuurnummer {invoice_number}.",
+            ]
         if note:
             paragraphs.insert(2, note)
         signature = [
@@ -266,8 +276,8 @@ class Mailer:
         ]
         return self.send(
             to=customer_email,
-            subject=f"Factuur {invoice_number} van {sender_name}",
+            subject=f"{document} {invoice_number} van {sender_name}",
             text=_text_body(paragraphs, signature),
-            html=_html_body(f"Factuur {invoice_number}", paragraphs, None, signature),
+            html=_html_body(f"{document} {invoice_number}", paragraphs, None, signature),
             attachments=[(pdf_filename, "application/pdf", pdf_bytes)],
         )

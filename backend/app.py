@@ -45,6 +45,7 @@ from sqlalchemy import (
     event,
     select,
     text,
+    update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import (
@@ -74,6 +75,33 @@ ALLOWED_RECEIPT_TYPES = {
 }
 
 VAT_RATES = {Decimal("0.21"), Decimal("0.09"), Decimal("0")}
+
+# Mandatory wording on the invoice for every treatment other than standard VAT.
+VAT_TREATMENT_NOTICES = {
+    "reverse_charge": "Btw verlegd.",
+    "intra_eu": "Btw verlegd: intracommunautaire prestatie. De afnemer voldoet de btw.",
+    "export": "Uitvoer buiten de EU: 0% btw.",
+    "kor": "Vrijgesteld van omzetbelasting op grond van de kleineondernemersregeling (KOR).",
+}
+
+VAT_TREATMENT_LABELS = {
+    "reverse_charge": "btw verlegd",
+    "intra_eu": "een intracommunautaire prestatie",
+    "export": "uitvoer buiten de EU",
+    "kor": "de kleineondernemersregeling",
+}
+
+# Rubrics of the Dutch VAT return (aangifte omzetbelasting).
+VAT_RUBRICS = {
+    "1a": "Leveringen/diensten belast met hoog tarief (21%)",
+    "1b": "Leveringen/diensten belast met laag tarief (9%)",
+    "1c": "Leveringen/diensten belast met overige tarieven",
+    "1e": "Leveringen/diensten belast met 0% of niet bij u belast (o.a. btw verlegd)",
+    "3a": "Leveringen naar landen buiten de EU (uitvoer)",
+    "3b": "Leveringen naar of diensten in landen binnen de EU",
+}
+
+DOMESTIC_COUNTRIES = {"nederland", "the netherlands", "netherlands", "nl"}
 
 PROTECTED_PAGES = {
     "dashboard.html",
@@ -124,6 +152,7 @@ class User(Base):
     iban: Mapped[str | None] = mapped_column(String(42))
     payment_term_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     invoice_prefix: Mapped[str | None] = mapped_column(String(12))
+    vat_scheme: Mapped[str] = mapped_column(String(20), default="standard", nullable=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verification_hash: Mapped[str | None] = mapped_column(String(64))
     verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -170,6 +199,13 @@ class Invoice(Base):
     total_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    kind: Mapped[str] = mapped_column(String(10), default="invoice", nullable=False)
+    credited_invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"))
+    vat_treatment: Mapped[str] = mapped_column(String(20), default="standard", nullable=False)
+    # Party details as they were on the day the invoice was issued; an issued
+    # invoice must not change when the profile or customer is edited later.
+    supplier_snapshot: Mapped[str | None] = mapped_column(Text)
+    customer_snapshot: Mapped[str | None] = mapped_column(Text)
     lines: Mapped[list[InvoiceLine]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan"
     )
@@ -198,6 +234,7 @@ class Receipt(Base):
     vendor: Mapped[str] = mapped_column(String(160), nullable=False)
     receipt_date: Mapped[date] = mapped_column(Date, nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    vat_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     category: Mapped[str] = mapped_column(String(60), nullable=False)
     filename: Mapped[str] = mapped_column(String(200), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -215,6 +252,7 @@ class VatDeclaration(Base):
     quarter: Mapped[int] = mapped_column(Integer, nullable=False)
     net_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     vat_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_vat_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -335,6 +373,7 @@ class UserOutput(BaseModel):
     iban: str | None
     payment_term_days: int
     invoice_prefix: str | None
+    vat_scheme: str
     email_verified: bool
     notify_email: bool
     notify_sms: bool
@@ -359,6 +398,7 @@ class ProfileInput(BaseModel):
     iban: Annotated[str | None, Field(max_length=42)] = None
     payment_term_days: Annotated[int, Field(ge=0, le=365)] = 30
     invoice_prefix: Annotated[str | None, Field(max_length=12)] = None
+    vat_scheme: Literal["standard", "kor"] = "standard"
     notify_email: bool = True
     notify_sms: bool = False
     notify_backup: bool = True
@@ -440,6 +480,7 @@ class InvoiceInput(BaseModel):
     due_date: date
     delivery_date: date | None = None
     note: Annotated[str | None, Field(max_length=1000)] = None
+    vat_treatment: Literal["standard", "reverse_charge", "intra_eu", "export"] = "standard"
     lines: Annotated[list[InvoiceLineInput], Field(min_length=1, max_length=100)]
 
     @field_validator("number")
@@ -460,13 +501,16 @@ class InvoiceInput(BaseModel):
             raise ValueError("Vervaldatum mag niet voor de factuurdatum liggen")
         return value
 
-    @field_validator("delivery_date")
+
+class CreditInput(BaseModel):
+    number: Annotated[str | None, Field(max_length=50)] = None
+    invoice_date: date | None = None
+    reason: Annotated[str | None, Field(max_length=1000)] = None
+
+    @field_validator("number", "reason")
     @classmethod
-    def delivery_not_before_invoice(cls, value: date | None, info) -> date | None:
-        invoice_date = info.data.get("invoice_date")
-        if value and invoice_date and value < invoice_date:
-            raise ValueError("Leverdatum mag niet voor de factuurdatum liggen")
-        return value
+    def strip_text(cls, value: str | None) -> str | None:
+        return clean_optional(value)
 
 
 class InvoiceLineOutput(BaseModel):
@@ -494,6 +538,9 @@ class InvoiceOutput(BaseModel):
     total_cents: int
     paid_at: datetime | None
     sent_at: datetime | None
+    kind: str
+    credited_invoice_id: int | None
+    vat_treatment: str
     lines: list[InvoiceLineOutput]
 
     model_config = ConfigDict(from_attributes=True)
@@ -521,6 +568,13 @@ class VatRateOutput(BaseModel):
     vat_cents: int
 
 
+class VatRubricOutput(BaseModel):
+    code: str
+    label: str
+    net_cents: int
+    vat_cents: int
+
+
 class VatQuarterOutput(BaseModel):
     year: int
     quarter: int
@@ -528,10 +582,16 @@ class VatQuarterOutput(BaseModel):
     start_date: date
     end_date: date
     deadline: date
+    closed: bool
     invoice_count: int
+    receipt_count: int
     net_cents: int
     vat_cents: int
+    input_vat_cents: int
+    payable_cents: int
+    kor: bool
     rates: list[VatRateOutput]
+    rubrics: list[VatRubricOutput]
     approved_at: datetime | None
     approved_on: date | None
 
@@ -551,6 +611,7 @@ class ReceiptOutput(BaseModel):
     vendor: str
     receipt_date: date
     amount_cents: int
+    vat_cents: int
     category: str
     content_type: str
     size_bytes: int
@@ -628,6 +689,10 @@ def vat_deadline(year: int, quarter: int) -> date:
 
 def previous_quarter(year: int, quarter: int) -> tuple[int, int]:
     return (year - 1, 4) if quarter == 1 else (year, quarter - 1)
+
+
+def invoice_file_prefix(invoice) -> str:
+    return "creditfactuur" if invoice.kind == "credit" else "factuur"
 
 
 def safe_filename(value: str) -> str:
@@ -872,45 +937,89 @@ def create_app(
             "iban": user.iban,
             "payment_term_days": user.payment_term_days,
             "invoice_prefix": user.invoice_prefix,
+            "vat_scheme": user.vat_scheme,
             "email_verified": user.email_verified_at is not None,
             "notify_email": user.notify_email,
             "notify_sms": user.notify_sms,
             "notify_backup": user.notify_backup,
         }
 
-    def missing_invoice_fields(user: User, customer: Customer) -> list[str]:
+    def supplier_details(user: User) -> dict[str, str]:
+        return {
+            "name": user.company_name,
+            "street": user.street or "",
+            "postal_code": user.postal_code or "",
+            "city": user.city or "",
+            "country": user.country or "Nederland",
+            "email": user.email,
+            "phone": user.phone or "",
+            "vat_number": user.vat_number or "",
+            "kvk_number": user.kvk_number,
+            "iban": user.iban or "",
+        }
+
+    def customer_details(customer: Customer) -> dict[str, str]:
+        return {
+            "name": customer.name,
+            "street": customer.street or "",
+            "postal_code": customer.postal_code or "",
+            "city": customer.city or "",
+            "country": customer.country or "Nederland",
+            "contact": customer.contact or "",
+            "email": customer.email or "",
+            "phone": customer.phone or "",
+            "vat_number": customer.vat_number or "",
+        }
+
+    def invoice_parties(invoice: Invoice, user: User, customer: Customer) -> tuple[dict, dict]:
+        supplier = (
+            json.loads(invoice.supplier_snapshot) if invoice.supplier_snapshot else supplier_details(user)
+        )
+        recipient = (
+            json.loads(invoice.customer_snapshot)
+            if invoice.customer_snapshot
+            else customer_details(customer)
+        )
+        return supplier, recipient
+
+    def missing_invoice_fields(supplier: dict, customer: dict, treatment: str) -> list[str]:
         missing = []
-        if not (user.street and user.postal_code and user.city):
+        if not (supplier["street"] and supplier["postal_code"] and supplier["city"]):
             missing.append("je bedrijfsadres")
-        if not user.vat_number:
+        if treatment != "kor" and not supplier["vat_number"]:
             missing.append("je btw-id")
-        if not (customer.street and customer.postal_code and customer.city):
-            missing.append(f"het adres van {customer.name}")
+        if not (customer["street"] and customer["postal_code"] and customer["city"]):
+            missing.append(f"het adres van {customer['name']}")
+        if treatment in {"reverse_charge", "intra_eu"} and not customer["vat_number"]:
+            missing.append(f"het btw-nummer van {customer['name']}")
         return missing
 
-    def invoice_pdf_bytes(user: User, customer: Customer, invoice: Invoice) -> bytes:
-        supplier = Party(
-            name=user.company_name,
-            street=user.street or "",
-            postal_code=user.postal_code or "",
-            city=user.city or "",
-            country=user.country or "Nederland",
-            email=user.email,
-            phone=user.phone or "",
-            vat_number=user.vat_number or "",
-            kvk_number=user.kvk_number,
-            iban=user.iban or "",
+    def ensure_quarter_open(session: Session, user: User, day: date) -> None:
+        quarter = (day.month - 1) // 3 + 1
+        approved = session.scalar(
+            select(VatDeclaration.id).where(
+                VatDeclaration.owner_id == user.id,
+                VatDeclaration.year == day.year,
+                VatDeclaration.quarter == quarter,
+            )
         )
-        recipient = Party(
-            name=customer.name,
-            street=customer.street or "",
-            postal_code=customer.postal_code or "",
-            city=customer.city or "",
-            country=customer.country or "Nederland",
-            contact=customer.contact or "",
-            email=customer.email or "",
-            phone=customer.phone or "",
-            vat_number=customer.vat_number or "",
+        if approved is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Q{quarter} {day.year} is al afgevinkt voor de btw. "
+                    "Kies een datum in een open kwartaal of trek de afvinking eerst in."
+                ),
+            )
+
+    def invoice_pdf_bytes(
+        session: Session, user: User, customer: Customer, invoice: Invoice
+    ) -> bytes:
+        supplier_data, customer_data = invoice_parties(invoice, user, customer)
+        supplier = Party(**supplier_data)
+        recipient = Party(**customer_data)
+        credited = (
+            session.get(Invoice, invoice.credited_invoice_id) if invoice.credited_invoice_id else None
         )
         lines = [
             InvoiceLineData(
@@ -938,7 +1047,13 @@ def create_app(
                 total_cents=invoice.total_cents,
                 note=invoice.note or "",
                 paid=invoice.status == "paid",
-                missing_fields=missing_invoice_fields(user, customer),
+                missing_fields=missing_invoice_fields(
+                    supplier_data, customer_data, invoice.vat_treatment
+                ),
+                credit=invoice.kind == "credit",
+                credited_number=credited.number if credited else "",
+                credited_date=credited.invoice_date if credited else None,
+                vat_notice=VAT_TREATMENT_NOTICES.get(invoice.vat_treatment, ""),
             )
         )
 
@@ -971,8 +1086,12 @@ def create_app(
         ).all()
 
         rate_totals: dict[int, dict[str, int]] = {}
+        rubric_totals: dict[str, dict[str, int]] = {
+            code: {"net": 0, "vat": 0} for code in ("1a", "1b", "1e", "3a", "3b")
+        }
         net_cents = 0
         vat_cents = 0
+        kor_net_cents = 0
         for invoice in invoices:
             for line in invoice.lines:
                 bucket = rate_totals.setdefault(line.vat_rate_bps, {"net": 0, "vat": 0})
@@ -980,6 +1099,50 @@ def create_app(
                 bucket["vat"] += line.vat_cents
                 net_cents += line.net_cents
                 vat_cents += line.vat_cents
+                if invoice.vat_treatment == "kor":
+                    kor_net_cents += line.net_cents
+                    continue
+                if invoice.vat_treatment == "export":
+                    code = "3a"
+                elif invoice.vat_treatment == "intra_eu":
+                    code = "3b"
+                elif invoice.vat_treatment == "reverse_charge" or line.vat_rate_bps == 0:
+                    code = "1e"
+                elif line.vat_rate_bps == 2100:
+                    code = "1a"
+                elif line.vat_rate_bps == 900:
+                    code = "1b"
+                else:
+                    code = "1c"
+                rubric = rubric_totals.setdefault(code, {"net": 0, "vat": 0})
+                rubric["net"] += line.net_cents
+                rubric["vat"] += line.vat_cents
+
+        kor = user.vat_scheme == "kor"
+        receipts = session.scalars(
+            select(Receipt).where(
+                Receipt.owner_id == user.id,
+                Receipt.receipt_date >= start,
+                Receipt.receipt_date <= end,
+            )
+        ).all()
+        # Under the KOR no VAT is charged, so none can be deducted either.
+        input_vat_cents = 0 if kor else sum(receipt.vat_cents for receipt in receipts)
+        rubrics = [
+            VatRubricOutput(
+                code=code, label=VAT_RUBRICS[code], net_cents=totals["net"], vat_cents=totals["vat"]
+            )
+            for code, totals in sorted(rubric_totals.items())
+        ]
+        if kor_net_cents:
+            rubrics.append(
+                VatRubricOutput(
+                    code="KOR",
+                    label="Omzet onder de kleineondernemersregeling (niet aangeven)",
+                    net_cents=kor_net_cents,
+                    vat_cents=0,
+                )
+            )
 
         declaration = session.scalar(
             select(VatDeclaration).where(
@@ -996,9 +1159,15 @@ def create_app(
             start_date=start,
             end_date=end,
             deadline=vat_deadline(year, quarter),
+            closed=end < date.today(),
             invoice_count=len(invoices),
+            receipt_count=len(receipts),
             net_cents=net_cents,
             vat_cents=vat_cents,
+            input_vat_cents=input_vat_cents,
+            payable_cents=vat_cents - input_vat_cents,
+            kor=kor,
+            rubrics=rubrics,
             rates=[
                 VatRateOutput(rate_bps=rate, net_cents=totals["net"], vat_cents=totals["vat"])
                 for rate, totals in sorted(rate_totals.items(), reverse=True)
@@ -1291,6 +1460,11 @@ def create_app(
                     "total_cents": invoice.total_cents,
                     "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
                     "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
+                    "kind": invoice.kind,
+                    "credited_invoice_id": invoice.credited_invoice_id,
+                    "vat_treatment": invoice.vat_treatment,
+                    "supplier": json.loads(invoice.supplier_snapshot) if invoice.supplier_snapshot else None,
+                    "customer": json.loads(invoice.customer_snapshot) if invoice.customer_snapshot else None,
                     "lines": [
                         {
                             "description": line.description,
@@ -1311,6 +1485,7 @@ def create_app(
                     "vendor": receipt.vendor,
                     "receipt_date": receipt.receipt_date.isoformat(),
                     "amount_cents": receipt.amount_cents,
+                    "vat_cents": receipt.vat_cents,
                     "category": receipt.category,
                     "content_type": receipt.content_type,
                     "size_bytes": receipt.size_bytes,
@@ -1324,6 +1499,7 @@ def create_app(
                     "quarter": declaration.quarter,
                     "net_cents": declaration.net_cents,
                     "vat_cents": declaration.vat_cents,
+                    "input_vat_cents": declaration.input_vat_cents,
                     "approved_at": declaration.approved_at.isoformat(),
                 }
                 for declaration in declarations
@@ -1386,6 +1562,9 @@ def create_app(
             directory.rmdir()
 
         invoice_ids = select(Invoice.id).where(Invoice.owner_id == user_id)
+        session.execute(
+            update(Invoice).where(Invoice.owner_id == user_id).values(credited_invoice_id=None)
+        )
         session.execute(delete(InvoiceLine).where(InvoiceLine.invoice_id.in_(invoice_ids)))
         session.execute(delete(Invoice).where(Invoice.owner_id == user_id))
         session.execute(delete(Receipt).where(Receipt.owner_id == user_id))
@@ -1506,22 +1685,30 @@ def create_app(
         if duplicate is not None:
             raise HTTPException(status_code=409, detail="Factuurnummer bestaat al")
 
-        invoice_quarter = (payload.invoice_date.month - 1) // 3 + 1
-        approved = session.scalar(
-            select(VatDeclaration.id).where(
-                VatDeclaration.owner_id == user.id,
-                VatDeclaration.year == payload.invoice_date.year,
-                VatDeclaration.quarter == invoice_quarter,
-            )
-        )
-        if approved is not None:
+        treatment = "kor" if user.vat_scheme == "kor" else payload.vat_treatment
+        if treatment != "standard" and any(line.vat_rate != 0 for line in payload.lines):
             raise HTTPException(
-                status_code=409,
+                status_code=422,
+                detail=f"Bij {VAT_TREATMENT_LABELS[treatment]} is het btw-tarief op elke regel 0%.",
+            )
+        supplier = supplier_details(user)
+        recipient = customer_details(customer)
+        missing = missing_invoice_fields(supplier, recipient, treatment)
+        if missing:
+            raise HTTPException(
+                status_code=422,
                 detail=(
-                    f"Q{invoice_quarter} {payload.invoice_date.year} is al afgevinkt voor de btw. "
-                    "Kies een factuurdatum in een open kwartaal of trek de afvinking eerst in."
+                    "Een factuur moet deze gegevens bevatten: " + ", ".join(missing) + ". "
+                    "Vul ze aan bij Instellingen of Klanten en sla de factuur opnieuw op."
                 ),
             )
+        abroad = recipient["country"].strip().lower() not in DOMESTIC_COUNTRIES
+        if treatment in {"intra_eu", "export"} and not abroad:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Bij {VAT_TREATMENT_LABELS[treatment]} moet de klant in het buitenland gevestigd zijn. Vul het land in bij de klant.",
+            )
+        ensure_quarter_open(session, user, payload.invoice_date)
 
         subtotal_cents = 0
         vat_cents = 0
@@ -1554,6 +1741,9 @@ def create_app(
             subtotal_cents=subtotal_cents,
             vat_cents=vat_cents,
             total_cents=subtotal_cents + vat_cents,
+            vat_treatment=treatment,
+            supplier_snapshot=json.dumps(supplier, ensure_ascii=False),
+            customer_snapshot=json.dumps(recipient, ensure_ascii=False),
             lines=stored_lines,
         )
         session.add(invoice)
@@ -1565,6 +1755,88 @@ def create_app(
         audit(session, user.id, "invoice.create", invoice.number, client_ip(request))
         session.commit()
         return get_owned_invoice(session, user, invoice.id)
+
+    @app.post(
+        "/api/invoices/{invoice_id}/credit",
+        response_model=InvoiceOutput,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def credit_invoice(
+        invoice_id: int,
+        payload: CreditInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        original = get_owned_invoice(session, user, invoice_id)
+        if original.kind == "credit":
+            raise HTTPException(status_code=409, detail="Een creditfactuur kun je niet crediteren")
+        if original.status == "credited":
+            raise HTTPException(status_code=409, detail="Deze factuur is al gecrediteerd")
+        customer = session.get(Customer, original.customer_id)
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Klant niet gevonden")
+
+        credit_date = payload.invoice_date or date.today()
+        if credit_date < original.invoice_date:
+            raise HTTPException(
+                status_code=422,
+                detail="De creditfactuur kan niet eerder gedateerd zijn dan de oorspronkelijke factuur",
+            )
+        number = payload.number or next_invoice_number(session, user)
+        duplicate = session.scalar(
+            select(Invoice.id).where(Invoice.owner_id == user.id, Invoice.number == number)
+        )
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="Factuurnummer bestaat al")
+        ensure_quarter_open(session, user, credit_date)
+
+        supplier, recipient = invoice_parties(original, user, customer)
+        credit = Invoice(
+            owner_id=user.id,
+            customer_id=original.customer_id,
+            number=number,
+            invoice_date=credit_date,
+            due_date=credit_date,
+            delivery_date=original.delivery_date or original.invoice_date,
+            note=payload.reason,
+            status="credited",
+            kind="credit",
+            credited_invoice_id=original.id,
+            vat_treatment=original.vat_treatment,
+            subtotal_cents=-original.subtotal_cents,
+            vat_cents=-original.vat_cents,
+            total_cents=-original.total_cents,
+            supplier_snapshot=json.dumps(supplier, ensure_ascii=False),
+            customer_snapshot=json.dumps(recipient, ensure_ascii=False),
+            lines=[
+                InvoiceLine(
+                    description=line.description,
+                    quantity=line.quantity,
+                    unit_price_cents=-line.unit_price_cents,
+                    vat_rate_bps=line.vat_rate_bps,
+                    net_cents=-line.net_cents,
+                    vat_cents=-line.vat_cents,
+                )
+                for line in original.lines
+            ],
+        )
+        original.status = "credited"
+        session.add(credit)
+        try:
+            session.commit()
+        except IntegrityError as error:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Factuurnummer bestaat al") from error
+        audit(
+            session,
+            user.id,
+            "invoice.credit",
+            f"{credit.number} crediteert {original.number}",
+            client_ip(request),
+        )
+        session.commit()
+        return get_owned_invoice(session, user, credit.id)
 
     @app.get("/api/invoices/{invoice_id}/pdf")
     def invoice_pdf(
@@ -1578,10 +1850,10 @@ def create_app(
         customer = session.get(Customer, invoice.customer_id)
         if customer is None:
             raise HTTPException(status_code=404, detail="Klant niet gevonden")
-        pdf = invoice_pdf_bytes(user, customer, invoice)
+        pdf = invoice_pdf_bytes(session, user, customer, invoice)
         audit(session, user.id, "invoice.pdf", invoice.number, client_ip(request))
         session.commit()
-        filename = f"factuur-{safe_filename(invoice.number)}.pdf"
+        filename = f"{invoice_file_prefix(invoice)}-{safe_filename(invoice.number)}.pdf"
         return Response(
             content=pdf,
             media_type="application/pdf",
@@ -1610,29 +1882,31 @@ def create_app(
                 status_code=422,
                 detail="Deze klant heeft geen e-mailadres. Vul een ontvanger in of bewerk de klant.",
             )
-        missing = missing_invoice_fields(user, customer)
+        supplier_data, customer_data = invoice_parties(invoice, user, customer)
+        missing = missing_invoice_fields(supplier_data, customer_data, invoice.vat_treatment)
         if missing:
             raise HTTPException(
                 status_code=422,
                 detail=(
                     "Deze factuur mist verplichte gegevens: " + ", ".join(missing) + ". "
-                    "Vul ze aan bij Instellingen of Klanten en verstuur de factuur opnieuw."
+                    "Maak een creditfactuur en een nieuwe factuur met de juiste gegevens."
                 ),
             )
         if payload.to:
             customer.email = recipient
 
-        pdf = invoice_pdf_bytes(user, customer, invoice)
+        pdf = invoice_pdf_bytes(session, user, customer, invoice)
         sent = mailer.send_invoice(
             sender_name=user.company_name,
-            customer_name=customer.name,
+            customer_name=customer_data["name"],
             customer_email=recipient,
             invoice_number=invoice.number,
             total_cents=invoice.total_cents,
             due_date=invoice.due_date.strftime("%d-%m-%Y"),
             note=payload.message or invoice.note or "",
             pdf_bytes=pdf,
-            pdf_filename=f"factuur-{safe_filename(invoice.number)}.pdf",
+            pdf_filename=f"{invoice_file_prefix(invoice)}-{safe_filename(invoice.number)}.pdf",
+            credit=invoice.kind == "credit",
         )
         if not sent:
             raise HTTPException(
@@ -1658,6 +1932,11 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         invoice = get_owned_invoice(session, user, invoice_id)
+        if invoice.status == "credited":
+            raise HTTPException(
+                status_code=409,
+                detail="Een gecrediteerde factuur of creditfactuur heeft geen betaalstatus meer",
+            )
         invoice.status = payload.status
         invoice.paid_at = utcnow() if payload.status == "paid" else None
         audit(
@@ -1693,6 +1972,11 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         quarter = build_vat_quarter(session, user, payload.year, payload.quarter)
+        if not quarter.closed:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{quarter.label} loopt nog. Je kunt een kwartaal pas afvinken als het voorbij is.",
+            )
         declaration = session.scalar(
             select(VatDeclaration).where(
                 VatDeclaration.owner_id == user.id,
@@ -1707,11 +1991,13 @@ def create_app(
                 quarter=payload.quarter,
                 net_cents=quarter.net_cents,
                 vat_cents=quarter.vat_cents,
+                input_vat_cents=quarter.input_vat_cents,
             )
             session.add(declaration)
         else:
             declaration.net_cents = quarter.net_cents
             declaration.vat_cents = quarter.vat_cents
+            declaration.input_vat_cents = quarter.input_vat_cents
             declaration.approved_at = utcnow()
         session.commit()
         return build_vat_quarter(session, user, payload.year, payload.quarter)
@@ -1759,10 +2045,16 @@ def create_app(
         amount: Annotated[Decimal, Form(ge=0, max_digits=12, decimal_places=2)],
         category: Annotated[str, Form(min_length=1, max_length=60)],
         file: Annotated[UploadFile, File()],
+        vat_amount: Annotated[Decimal, Form(ge=0, max_digits=12, decimal_places=2)] = Decimal("0"),
         session: Session = Depends(get_session),
         user: User = Depends(get_current_user),
     ):
         enforce(request, "receipt-upload", 60, 3600, str(user.id))
+        if vat_amount > amount:
+            raise HTTPException(
+                status_code=422, detail="De btw kan niet hoger zijn dan het totaalbedrag van de bon"
+            )
+        ensure_quarter_open(session, user, receipt_date)
         content_type = file.content_type or ""
         suffix = ALLOWED_RECEIPT_TYPES.get(content_type)
         if suffix is None:
@@ -1792,6 +2084,7 @@ def create_app(
             vendor=vendor.strip(),
             receipt_date=receipt_date,
             amount_cents=to_cents(amount),
+            vat_cents=to_cents(vat_amount),
             category=category.strip(),
             filename=f"{user.id}/{filename}",
             content_type=content_type,
@@ -1836,6 +2129,7 @@ def create_app(
         receipt = session.get(Receipt, receipt_id)
         if receipt is None or receipt.owner_id != user.id:
             raise HTTPException(status_code=404, detail="Bon niet gevonden")
+        ensure_quarter_open(session, user, receipt.receipt_date)
         file_path = (upload_root / receipt.filename).resolve()
         session.delete(receipt)
         session.commit()

@@ -15,3 +15,5 @@ backend/uploads
 node_modules
 *.log
 .tmp
+.freebuff
+screenshots

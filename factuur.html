@@ -76,6 +76,16 @@
             <input id="delivery-date" class="field-control" type="date">
             <div class="field-hint">De datum waarop je het werk hebt geleverd. Verplicht op de factuur als die afwijkt van de factuurdatum.</div>
           </div>
+          <div class="field-group" style="margin-top:18px" id="treatment-group">
+            <label class="field-label" for="vat-treatment">Btw-behandeling</label>
+            <select id="vat-treatment" class="field-control">
+              <option value="standard">Normaal (21%, 9% of 0% per regel)</option>
+              <option value="reverse_charge">Btw verlegd naar Nederlandse afnemer</option>
+              <option value="intra_eu">Klant in een ander EU-land (btw verlegd)</option>
+              <option value="export">Uitvoer buiten de EU</option>
+            </select>
+            <div class="field-hint" id="treatment-hint">Bij verlegde btw en EU-klanten is het btw-nummer van de klant verplicht.</div>
+          </div>
           <div class="field-group" style="margin-top:18px">
             <label class="field-label" for="invoice-note">Opmerking op de factuur (optioneel)</label>
             <textarea id="invoice-note" class="field-control" rows="3" maxlength="1000" placeholder="Bijv. Betaling in twee termijnen is afgesproken."></textarea>
@@ -141,6 +151,22 @@
   const invoiceNote = document.getElementById('invoice-note');
   const saveButton = document.getElementById('save-invoice');
   const customerAlert = document.getElementById('customer-alert');
+  const treatmentSelect = document.getElementById('vat-treatment');
+  const treatmentHint = document.getElementById('treatment-hint');
+  let korUser = false;
+
+  function zeroRateOnly() {
+    return korUser || treatmentSelect.value !== 'standard';
+  }
+
+  function applyTreatment() {
+    const locked = zeroRateOnly();
+    lineContainer.querySelectorAll('.line-tax').forEach(select => {
+      if (locked) select.value = '0';
+      select.disabled = locked;
+    });
+    recalc();
+  }
 
   function asLocalDate(value) {
     const offset = value.getTimezoneOffset();
@@ -229,6 +255,10 @@
       vatSelect.add(new Option(optionValue[1], optionValue[0]));
     });
     vatSelect.value = vatRate == null ? '0.21' : String(vatRate);
+    if (zeroRateOnly()) {
+      vatSelect.value = '0';
+      vatSelect.disabled = true;
+    }
     vatCell.append(vatSelect);
 
     const totalCell = cell('Regeltotaal');
@@ -295,6 +325,15 @@
 
     applyPaymentTerm(user);
 
+    korUser = user && user.vat_scheme === 'kor';
+    if (korUser) {
+      document.getElementById('treatment-group').hidden = true;
+      applyTreatment();
+    }
+    const profileGaps = [];
+    if (!user.street || !user.postal_code || !user.city) profileGaps.push('je bedrijfsadres');
+    if (!korUser && !user.vat_number) profileGaps.push('je btw-id');
+
     const today = new Date();
     invoiceDate.value = asLocalDate(today);
     syncDueDate();
@@ -306,8 +345,24 @@
         '<a class="table-link" href="klanten.html">Klant toevoegen</a>.</div>';
       customerSelect.disabled = true;
       saveButton.disabled = true;
+    } else if (profileGaps.length) {
+      customerAlert.hidden = false;
+      customerAlert.className = 'alert warning';
+      customerAlert.innerHTML = '<div><strong>Vul eerst ' + profileGaps.join(' en ') + ' in.</strong> ' +
+        'Die gegevens zijn wettelijk verplicht op elke factuur. ' +
+        '<a class="table-link" href="instellingen.html">Naar instellingen</a>.</div>';
     }
   }
+
+  treatmentSelect.addEventListener('change', () => {
+    treatmentHint.textContent = {
+      standard: 'Bij verlegde btw en EU-klanten is het btw-nummer van de klant verplicht.',
+      reverse_charge: 'Alle regels krijgen 0%. Op de factuur komt "Btw verlegd" en het btw-nummer van je klant.',
+      intra_eu: 'Alle regels krijgen 0%. Vul het land en btw-nummer van je klant in. Vergeet de opgaaf ICP niet.',
+      export: 'Alle regels krijgen 0%. Bewaar bewijs dat de goederen de EU hebben verlaten.'
+    }[treatmentSelect.value];
+    applyTreatment();
+  });
 
   invoiceForm.addEventListener('submit', async event => {
     event.preventDefault();
@@ -349,11 +404,6 @@
       note(feedback, 'De vervaldatum mag niet voor de factuurdatum liggen.', 'error');
       return;
     }
-    if (deliveryDate.value && deliveryDate.value < invoiceDate.value) {
-      note(feedback, 'De leverdatum mag niet voor de factuurdatum liggen.', 'error');
-      return;
-    }
-
     setBusy(saveButton, true, 'Opslaan…');
     try {
       const invoice = await api('/api/invoices', {
@@ -365,6 +415,7 @@
           due_date: dueDate.value,
           delivery_date: deliveryDate.value || null,
           note: invoiceNote.value.trim() || null,
+          vat_treatment: korUser ? 'standard' : treatmentSelect.value,
           lines
         }
       });

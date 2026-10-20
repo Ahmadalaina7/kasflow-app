@@ -111,6 +111,14 @@
               <div class="field-hint">Bijv. KV2026-001.</div>
             </div>
           </div>
+          <div class="field-group" style="margin-top:18px">
+            <label class="field-label" for="company-vat-scheme">Btw-regeling</label>
+            <select id="company-vat-scheme" class="field-control">
+              <option value="standard">Ik reken btw (normale regeling)</option>
+              <option value="kor">Kleineondernemersregeling (KOR): ik reken geen btw</option>
+            </select>
+            <div class="field-hint">Kies de KOR alleen als je je daarvoor bij de Belastingdienst hebt aangemeld. Je facturen krijgen dan 0% en de wettelijke vrijstellingstekst.</div>
+          </div>
           <div class="form-actions">
             <button type="submit" class="btn btn-primary" id="company-save">Bedrijfsgegevens opslaan</button>
           </div>
@@ -261,6 +269,7 @@
       iban: value('company-iban') || null,
       payment_term_days: Number(value('company-terms')) || 30,
       invoice_prefix: value('company-prefix') || null,
+      vat_scheme: document.getElementById('company-vat-scheme').value,
       notify_email: document.getElementById('notify-email').checked,
       notify_sms: document.getElementById('notify-sms').checked,
       notify_backup: document.getElementById('notify-backup').checked
@@ -283,6 +292,7 @@
     fillValue('company-iban', user.iban);
     fillValue('company-prefix', user.invoice_prefix);
     document.getElementById('company-terms').value = String(user.payment_term_days || 30);
+    document.getElementById('company-vat-scheme').value = user.vat_scheme || 'standard';
     document.getElementById('account-email').value = user.email;
     document.getElementById('account-verified').textContent = user.email_verified
       ? 'Dit adres is bevestigd.'

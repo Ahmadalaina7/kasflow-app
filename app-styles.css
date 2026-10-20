@@ -226,6 +226,8 @@ tr td:last-child, tr th:last-child{ padding-right:0; }
 .badge.paid{ background:rgba(14,159,110,0.1); color:var(--emerald-600); }
 .badge.pending{ background:rgba(201,162,75,0.16); color:#8A6A24; }
 .badge.overdue{ background:rgba(194,72,61,0.1); color:var(--danger); }
+.data-table tr.row-selected td{ background:rgba(14,159,110,0.06); }
+.badge.credited{ background:rgba(100,116,139,0.12); color:var(--ink-500); }
 .pill{
   display:inline-flex; align-items:center; gap:7px;
   padding:7px 13px; border-radius:999px;
