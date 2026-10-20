@@ -38,6 +38,7 @@ BACKFILL_DEFAULTS: dict[str, tuple[str, object]] = {
     "ib_hours_criterion": ("0", 0),
     "reminder_count": ("0", 0),
     "vat_origin": ("'nl'", "nl"),
+    "company_id": ("0", 0),
 }
 
 INVOICE_COLUMNS = [
@@ -179,10 +180,133 @@ def rebuild_legacy_invoices(engine: Engine) -> bool:
         return True
 
 
+TENANT_TABLES = (
+    "customers",
+    "invoices",
+    "receipts",
+    "bank_transactions",
+    "time_entries",
+    "trips",
+    "vat_declarations",
+)
+
+
+def ensure_tenancy(engine: Engine) -> None:
+    """Give every existing account a company and stamp bookkeeping rows with it.
+
+    Older databases stored the administration on the user. New features (team
+    roles, extra companies) need a company row, so this copies the profile into
+    ``companies`` with the same id as the user and fills ``company_id``.
+    """
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "users" not in tables or "companies" not in tables:
+        return
+
+    dialect = engine.dialect.name
+    with engine.begin() as connection:
+        for table in TENANT_TABLES:
+            if table not in tables:
+                continue
+            columns = {column["name"] for column in inspector.get_columns(table)}
+            if "company_id" not in columns:
+                connection.execute(text(f'ALTER TABLE {table} ADD COLUMN "company_id" INTEGER'))
+                logger.info("Kolom %s.company_id toegevoegd", table)
+                inspector = inspect(engine)
+
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (
+                    id, name, kvk_number, vat_number, phone, street, postal_code,
+                    city, country, iban, payment_term_days, invoice_prefix, vat_scheme,
+                    ib_starter, ib_hours_criterion, created_by_id, created_at
+                )
+                SELECT
+                    u.id, u.company_name, u.kvk_number, u.vat_number, u.phone, u.street,
+                    u.postal_code, u.city, COALESCE(u.country, 'Nederland'), u.iban,
+                    COALESCE(u.payment_term_days, 30), u.invoice_prefix,
+                    COALESCE(u.vat_scheme, 'standard'), COALESCE(u.ib_starter, 0),
+                    COALESCE(u.ib_hours_criterion, 0), u.id, u.created_at
+                FROM users u
+                WHERE NOT EXISTS (SELECT 1 FROM companies c WHERE c.id = u.id)
+                """
+            )
+        )
+        if "memberships" in tables:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO memberships (user_id, company_id, role, created_at)
+                    SELECT u.id, u.id, 'owner', u.created_at
+                    FROM users u
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM memberships m WHERE m.user_id = u.id AND m.company_id = u.id
+                    )
+                    """
+                )
+            )
+
+        for table in TENANT_TABLES:
+            if table not in tables:
+                continue
+            connection.execute(
+                text(
+                    f'UPDATE {table} SET company_id = owner_id '
+                    f'WHERE company_id IS NULL OR company_id = 0'
+                )
+            )
+
+        if dialect == "postgresql":
+            connection.execute(
+                text(
+                    """
+                    SELECT setval(
+                        pg_get_serial_sequence('companies', 'id'),
+                        GREATEST((SELECT COALESCE(MAX(id), 1) FROM companies), 1)
+                    )
+                    """
+                )
+            )
+            constraint_drops = (
+                'ALTER TABLE invoices DROP CONSTRAINT IF EXISTS uq_invoices_owner_number',
+                'ALTER TABLE bank_transactions DROP CONSTRAINT IF EXISTS uq_bank_owner_fingerprint',
+                'ALTER TABLE vat_declarations DROP CONSTRAINT IF EXISTS uq_vat_owner_period',
+            )
+            for statement in constraint_drops:
+                connection.execute(text(statement))
+        else:
+            connection.execute(text("DROP INDEX IF EXISTS uq_invoices_owner_number"))
+            connection.execute(text("DROP INDEX IF EXISTS uq_bank_owner_fingerprint"))
+            connection.execute(text("DROP INDEX IF EXISTS uq_vat_owner_period"))
+
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_company_number "
+                "ON invoices (company_id, number)"
+            )
+        )
+        if "bank_transactions" in tables:
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_company_fingerprint "
+                    "ON bank_transactions (company_id, fingerprint)"
+                )
+            )
+        if "vat_declarations" in tables:
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_vat_company_period "
+                    "ON vat_declarations (company_id, year, quarter)"
+                )
+            )
+
+
 def run_migrations(engine: Engine, metadata: MetaData) -> None:
     added = add_missing_columns(engine, metadata)
     # The rebuild only knows the legacy invoice columns, so add the newer ones again.
     if rebuild_legacy_invoices(engine):
         added += add_missing_columns(engine, metadata)
+    ensure_tenancy(engine)
     if added:
         logger.info("Kolommen toegevoegd: %s", ", ".join(f"{t}.{c}" for t, c in added))

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<title>Kasflow — Uitnodiging</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body>
+<div class="auth-shell single">
+  <div class="auth-form-wrap">
+    <form class="auth-form" id="invite-form" novalidate>
+      <a class="auth-brand" href="index.html" style="display:flex"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+      <h1 id="invite-title">Uitnodiging openen</h1>
+      <p class="sub" id="invite-sub">We controleren de link.</p>
+      <div class="field-group" id="password-wrap" hidden>
+        <label class="field-label" for="invite-password">Kies een wachtwoord</label>
+        <input id="invite-password" class="field-control" type="password" minlength="12" maxlength="1024" autocomplete="new-password" placeholder="Minimaal 12 tekens">
+        <div class="field-hint">Daarmee maak je je Kasflow-account aan. Daarna zie je de administratie waarvoor je bent uitgenodigd.</div>
+      </div>
+      <button type="submit" class="auth-submit" id="invite-submit" hidden>Uitnodiging accepteren</button>
+      <p class="auth-note" id="invite-feedback" role="status" aria-live="polite"></p>
+      <p class="auth-alt"><a href="login.html">Naar inloggen</a></p>
+    </form>
+  </div>
+</div>
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+  const token = new URLSearchParams(window.location.search).get('token') || '';
+  const title = document.getElementById('invite-title');
+  const sub = document.getElementById('invite-sub');
+  const form = document.getElementById('invite-form');
+  const passwordWrap = document.getElementById('password-wrap');
+  const submit = document.getElementById('invite-submit');
+  const feedback = document.getElementById('invite-feedback');
+
+  async function load() {
+    if (!token) {
+      Kasflow.note(feedback, 'Deze link is onvolledig. Vraag een nieuwe uitnodiging aan.', 'error');
+      return;
+    }
+    try {
+      const preview = await Kasflow.api('/api/team/invites/preview?token=' + encodeURIComponent(token));
+      title.textContent = preview.company_name;
+      sub.textContent = 'Je krijgt de rol ' + preview.role_label + ' in deze administratie (' + preview.email + ').';
+      passwordWrap.hidden = preview.has_account;
+      submit.hidden = false;
+      submit.textContent = preview.has_account ? 'Toegang accepteren' : 'Account aanmaken en accepteren';
+    } catch (error) {
+      Kasflow.note(feedback, error.message, 'error');
+    }
+  }
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const password = document.getElementById('invite-password').value;
+    if (!passwordWrap.hidden && password.length < 12) {
+      Kasflow.note(feedback, 'Kies een wachtwoord van minimaal 12 tekens.', 'error');
+      return;
+    }
+    Kasflow.setBusy(submit, true, 'Bezig…');
+    try {
+      await Kasflow.api('/api/team/accept', {
+        method: 'POST',
+        body: { token: token, password: passwordWrap.hidden ? null : password }
+      });
+      window.location.replace('dashboard.html');
+    } catch (error) {
+      Kasflow.note(feedback, error.message, 'error');
+      Kasflow.setBusy(submit, false);
+    }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

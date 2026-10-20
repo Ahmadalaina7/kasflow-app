@@ -19,16 +19,27 @@
   };
 
   const NAV = [
-    { id: 'dashboard', href: 'dashboard.html', label: 'Dashboard', tab: true },
-    { id: 'facturen', href: 'facturen.html', label: 'Facturen', tab: true },
-    { id: 'bonnetjes', href: 'bonnetjes.html', label: 'Bonnetjes', tab: true },
-    { id: 'btw', href: 'btw.html', label: 'BTW', fullLabel: 'BTW & aangifte', tab: true },
-    { id: 'bank', href: 'bank.html', label: 'Bank' },
-    { id: 'uren', href: 'uren.html', label: 'Uren', fullLabel: 'Uren & kilometers' },
-    { id: 'jaaroverzicht', href: 'jaaroverzicht.html', label: 'Jaar' },
-    { id: 'klanten', href: 'klanten.html', label: 'Klanten' },
-    { id: 'instellingen', href: 'instellingen.html', label: 'Instellingen' },
+    { id: 'dashboard', href: 'dashboard.html', label: 'Dashboard', tab: true, perm: 'dashboard.read' },
+    { id: 'facturen', href: 'facturen.html', label: 'Facturen', tab: true, perm: 'invoices.read' },
+    { id: 'bonnetjes', href: 'bonnetjes.html', label: 'Bonnetjes', tab: true, perm: 'receipts.read' },
+    { id: 'btw', href: 'btw.html', label: 'BTW', fullLabel: 'BTW & aangifte', tab: true, perm: 'vat.read' },
+    { id: 'bank', href: 'bank.html', label: 'Bank', perm: 'bank.read' },
+    { id: 'uren', href: 'uren.html', label: 'Uren', fullLabel: 'Uren & kilometers', perm: 'hours.read' },
+    { id: 'jaaroverzicht', href: 'jaaroverzicht.html', label: 'Jaar', perm: 'year.read' },
+    { id: 'klanten', href: 'klanten.html', label: 'Klanten', perm: 'customers.read' },
+    { id: 'instellingen', href: 'instellingen.html', label: 'Instellingen', perm: 'settings.read' },
   ];
+
+  function can(user, permission) {
+    const perms = user && Array.isArray(user.permissions) ? user.permissions : null;
+    if (!permission) return true;
+    if (!perms) return true;
+    return perms.indexOf(permission) !== -1;
+  }
+
+  function visibleNav(user) {
+    return NAV.filter(item => can(user, item.perm));
+  }
 
   const PAGE_ALIASES = { 'factuur.html': 'facturen' };
   const ORIGINAL_TITLE = document.title;
@@ -55,16 +66,28 @@
     );
   }
 
-  function renderSidebar() {
+  function renderSidebar(user) {
+    const items = visibleNav(user);
     const nav = document.querySelector('.sidebar .side-nav');
     if (nav) {
-      nav.innerHTML = NAV.map(item => navLink(item, 'side-link')).join('');
+      nav.innerHTML = items.map(item => navLink(item, 'side-link')).join('');
       nav.setAttribute('aria-label', 'Hoofdnavigatie');
     }
 
     const foot = document.querySelector('.sidebar .sidebar-foot');
     if (foot) {
+      const companies = (user && user.companies) || [];
+      const switcher = companies.length
+        ? '<label class="side-company"><span class="sr-only">Actief bedrijf</span><select data-company-switch>' +
+          companies.map(company =>
+            '<option value="' + company.id + '"' +
+            (company.id === user.company_id ? ' selected' : '') + '>' +
+            escapeHtml(company.name) + '</option>'
+          ).join('') +
+          '</select></label>'
+        : '';
       foot.innerHTML =
+        switcher +
         '<div class="side-user">' +
         '<span class="side-avatar" data-user-initials aria-hidden="true"></span>' +
         '<span class="side-user-copy">' +
@@ -315,16 +338,18 @@
 
   function applyUser(user) {
     if (!user) return;
+    renderSidebar(user);
     document.querySelectorAll('[data-user-company]').forEach(el => {
       el.textContent = user.company_name;
     });
     document.querySelectorAll('[data-user-email]').forEach(el => {
-      el.textContent = user.email;
+      el.textContent = user.role_label ? user.role_label + ' · ' + user.email : user.email;
     });
     document.querySelectorAll('[data-user-initials]').forEach(el => {
       el.textContent = initials(user.company_name);
     });
     document.title = ORIGINAL_TITLE.replace(/^Kasflow/, 'Kasflow — ' + user.company_name);
+    document.body.dataset.role = user.role || '';
   }
 
   const moneyFormatter = new Intl.NumberFormat('nl-NL', {
@@ -456,6 +481,19 @@
     }
   });
 
+  document.addEventListener('change', async event => {
+    const select = event.target.closest('[data-company-switch]');
+    if (!select) return;
+    const companyId = Number(select.value);
+    if (!companyId) return;
+    try {
+      await api('/api/companies/select', { method: 'POST', body: { company_id: companyId } });
+      window.location.reload();
+    } catch (error) {
+      window.alert(error.message);
+    }
+  });
+
   renderSidebar();
   renderMobileShell();
 
@@ -489,6 +527,7 @@
     logout,
     installApp,
     canInstall: () => Boolean(deferredInstall),
+    can,
     ready,
     get user() {
       return window.Kasflow._user || null;

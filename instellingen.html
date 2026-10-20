@@ -203,6 +203,54 @@
         <p class="field-hint" id="install-hint">Werkt in Chrome, Edge, Safari (iPhone: Deel → Zet op beginscherm) en Android.</p>
       </section>
 
+      <section class="settings-card wide" id="companies-card">
+        <h2>Nog een bedrijf</h2>
+        <p>Eén login, meerdere administraties. Elk bedrijf heeft eigen facturen, btw en team.</p>
+        <form id="new-company-form" novalidate>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="new-company-name">Bedrijfsnaam</label>
+              <input id="new-company-name" class="field-control" type="text" maxlength="200" required>
+            </div>
+            <div>
+              <label class="field-label" for="new-company-kvk">KVK-nummer</label>
+              <input id="new-company-kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" required>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="new-company-save">Bedrijf toevoegen</button>
+          </div>
+          <p class="form-note" id="new-company-feedback" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="settings-card wide" id="team-card">
+        <h2>Team en rollen</h2>
+        <p>Nodig een boekhouder, facturatiemedewerker of kijker uit. Rechten gelden per bedrijf.</p>
+        <form id="invite-form" novalidate>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="invite-email">E-mailadres</label>
+              <input id="invite-email" class="field-control" type="email" maxlength="320" placeholder="collega@bedrijf.nl" required>
+            </div>
+            <div>
+              <label class="field-label" for="invite-role">Rol</label>
+              <select id="invite-role" class="field-control">
+                <option value="boekhouder">Boekhouder</option>
+                <option value="admin">Beheerder</option>
+                <option value="facturatie">Facturatie</option>
+                <option value="kijker">Alleen kijken</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="invite-save">Uitnodiging sturen</button>
+          </div>
+          <p class="form-note" id="invite-feedback" role="status" aria-live="polite"></p>
+        </form>
+        <ul class="member-list" id="team-list"></ul>
+      </section>
+
       <section class="settings-card wide">
         <h2>Jouw gegevens</h2>
         <p>Je administratie is van jou. Download op elk moment een volledige kopie: alle klanten, facturen en btw-overzichten als JSON plus je originele bonbestanden.</p>
@@ -452,10 +500,113 @@
     }
   }
 
+  async function loadTeam() {
+    const list = document.getElementById('team-list');
+    try {
+      const team = await api('/api/team');
+      const members = (team.members || []).map(member => {
+        const role = member.self
+          ? '<small>' + escapeHtml(member.role_label) + ' · jij</small>'
+          : '<select data-role="' + member.id + '">' +
+            ['boekhouder', 'admin', 'facturatie', 'kijker'].map(key =>
+              '<option value="' + key + '"' + (key === member.role ? ' selected' : '') + '>' + key + '</option>'
+            ).join('') + '</select>';
+        const action = member.self
+          ? ''
+          : '<button type="button" class="btn btn-outline btn-sm" data-remove-member="' + member.id + '">Verwijderen</button>';
+        return '<li class="member-row"><div><strong>' + escapeHtml(member.email) + '</strong>' + role + '</div>' + action + '</li>';
+      }).join('');
+      const invites = (team.invites || []).map(invite =>
+        '<li class="member-row"><div><strong>' + escapeHtml(invite.email) + '</strong><small>Uitnodiging · ' +
+        escapeHtml(invite.role_label) + '</small></div>' +
+        '<button type="button" class="btn btn-outline btn-sm" data-revoke-invite="' + invite.id + '">Intrekken</button></li>'
+      ).join('');
+      list.innerHTML = (members + invites) || '<li class="muted">Nog geen teamleden.</li>';
+    } catch (error) {
+      list.innerHTML = '<li class="muted">' + escapeHtml(error.message) + '</li>';
+    }
+  }
+
+  document.getElementById('new-company-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = document.getElementById('new-company-save');
+    setBusy(button, true, 'Toevoegen…');
+    try {
+      await api('/api/companies', {
+        method: 'POST',
+        body: {
+          name: value('new-company-name'),
+          kvk_number: value('new-company-kvk')
+        }
+      });
+      window.location.reload();
+    } catch (error) {
+      note(document.getElementById('new-company-feedback'), error.message, 'error');
+      setBusy(button, false);
+    }
+  });
+
+  document.getElementById('invite-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = document.getElementById('invite-save');
+    setBusy(button, true, 'Versturen…');
+    try {
+      await api('/api/team/invites', {
+        method: 'POST',
+        body: {
+          email: value('invite-email'),
+          role: document.getElementById('invite-role').value
+        }
+      });
+      document.getElementById('invite-email').value = '';
+      note(document.getElementById('invite-feedback'), 'Uitnodiging verstuurd.', 'success');
+      await loadTeam();
+    } catch (error) {
+      note(document.getElementById('invite-feedback'), error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  });
+
+  document.getElementById('team-list').addEventListener('change', async event => {
+    const select = event.target.closest('[data-role]');
+    if (!select) return;
+    try {
+      await api('/api/team/' + select.dataset.role, { method: 'PATCH', body: { role: select.value } });
+      note(document.getElementById('invite-feedback'), 'Rol bijgewerkt.', 'success');
+    } catch (error) {
+      note(document.getElementById('invite-feedback'), error.message, 'error');
+    }
+  });
+
+  document.getElementById('team-list').addEventListener('click', async event => {
+    const remove = event.target.closest('[data-remove-member]');
+    const revoke = event.target.closest('[data-revoke-invite]');
+    try {
+      if (remove) {
+        await api('/api/team/' + remove.dataset.removeMember, { method: 'DELETE' });
+        await loadTeam();
+      }
+      if (revoke) {
+        await api('/api/team/invites/' + revoke.dataset.revokeInvite, { method: 'DELETE' });
+        await loadTeam();
+      }
+    } catch (error) {
+      note(document.getElementById('invite-feedback'), error.message, 'error');
+    }
+  });
+
   Kasflow.ready.then(user => {
     if (user) {
       fillProfile(user);
       loadActivity();
+      const canTeam = Kasflow.can(user, 'team.read');
+      document.getElementById('team-card').hidden = !canTeam;
+      if (canTeam) loadTeam();
+      const canSettings = Kasflow.can(user, 'settings.write');
+      document.getElementById('company-form').querySelectorAll('input, select, button').forEach(el => {
+        if (!canSettings && el.id !== 'resend-verification') el.disabled = !canSettings;
+      });
     }
   });
 })();

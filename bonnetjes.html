@@ -41,9 +41,7 @@
         <h2>Bon toevoegen</h2>
         <span class="pill muted">JPG, PNG, WEBP of PDF · max 5 MB</span>
       </div>
-      <div class="alert" style="margin-bottom:20px">
-        <div>Automatische herkenning (OCR) is nog niet gekoppeld. Je vult de gegevens zelf in; het bestand wordt veilig bij je administratie opgeslagen.</div>
-      </div>
+      <p class="parse-note" id="parse-note">Upload een PDF of een scherpe foto. Kasflow leest leverancier, datum, bedrag en btw uit; jij controleert ze voor je opslaat.</p>
       <form id="receipt-form" novalidate>
         <div class="upload-panel">
           <div class="upload-dropzone" id="dropzone" role="button" tabindex="0" aria-label="Kies of sleep een bonbestand">
@@ -289,7 +287,43 @@
       fileInput.click();
     }
   });
-  fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
+  async function parseFile(file) {
+    const parseNote = document.getElementById('parse-note');
+    if (!file) return;
+    parseNote.textContent = 'Bon uitlezen…';
+    const payload = new FormData();
+    payload.append('file', file);
+    try {
+      const result = await api('/api/receipts/parse', { method: 'POST', body: payload });
+      if (result.vendor) document.getElementById('receipt-vendor').value = result.vendor;
+      if (result.receipt_date) dateInput.value = result.receipt_date;
+      if (result.amount != null) amountInput.value = Number(result.amount).toFixed(2);
+      if (result.vat_origin) originSelect.value = result.vat_origin;
+      if (result.vat_rate === 21 || result.vat_rate === 9 || result.vat_rate === 0) {
+        rateSelect.value = String(result.vat_rate);
+      } else if (result.vat_amount != null) {
+        rateSelect.value = 'custom';
+      }
+      if (result.vat_amount != null) vatInput.value = Number(result.vat_amount).toFixed(2);
+      if (result.category) categorySelect.value = result.category;
+      syncVat();
+      if (result.vat_amount != null && rateSelect.value === 'custom') {
+        vatInput.value = Number(result.vat_amount).toFixed(2);
+      }
+      const bits = [];
+      if (result.confidence) bits.push(Math.round(result.confidence * 100) + '% herkend');
+      (result.notes || []).forEach(item => bits.push(item));
+      parseNote.textContent = bits.join(' ') || 'Geen tekst herkend. Vul de gegevens zelf in.';
+    } catch (error) {
+      parseNote.textContent = error.message;
+    }
+  }
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0] || null;
+    setFile(file);
+    if (file) parseFile(file);
+  });
   ['dragover', 'dragenter'].forEach(type => dropzone.addEventListener(type, event => {
     event.preventDefault();
     dropzone.classList.add('dragging');
@@ -302,6 +336,7 @@
     if (files && files.length) {
       fileInput.files = files;
       setFile(files[0]);
+      parseFile(files[0]);
     }
   });
 

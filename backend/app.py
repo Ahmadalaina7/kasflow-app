@@ -60,11 +60,20 @@ from sqlalchemy.orm import (
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from access import (
+    ROLES,
+    has_permission,
+    normalize_role,
+    permissions_for,
+    role_label,
+    write_permission_for,
+)
 from bank_import import StatementError, parse_statement
 from config import Settings
 from invoice_pdf import InvoiceLineData, InvoicePdfData, Party, build_invoice_pdf
 from mailer import Mailer
 from migrations import run_migrations
+from receipt_parse import parse_receipt_file
 from tax_rules import (
     CATEGORY_BY_KEY,
     EXPENSE_CATEGORIES,
@@ -189,11 +198,59 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
+class Company(Base):
+    __tablename__ = "companies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    kvk_number: Mapped[str] = mapped_column(String(8), nullable=False)
+    vat_number: Mapped[str | None] = mapped_column(String(20))
+    phone: Mapped[str | None] = mapped_column(String(50))
+    street: Mapped[str | None] = mapped_column(String(200))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    city: Mapped[str | None] = mapped_column(String(120))
+    country: Mapped[str] = mapped_column(String(120), default="Nederland", nullable=False)
+    iban: Mapped[str | None] = mapped_column(String(42))
+    payment_term_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    invoice_prefix: Mapped[str | None] = mapped_column(String(12))
+    vat_scheme: Mapped[str] = mapped_column(String(20), default="standard", nullable=False)
+    ib_starter: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ib_hours_criterion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("user_id", "company_id", name="uq_memberships_user_company"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), default="kijker", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class TeamInvite(Base):
+    __tablename__ = "team_invites"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), default="boekhouder", nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    invited_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     contact: Mapped[str | None] = mapped_column(String(200))
     email: Mapped[str | None] = mapped_column(String(320))
@@ -208,10 +265,11 @@ class Customer(Base):
 
 class Invoice(Base):
     __tablename__ = "invoices"
-    __table_args__ = (UniqueConstraint("owner_id", "number", name="uq_invoices_owner_number"),)
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_invoices_company_number"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), nullable=False)
     number: Mapped[str] = mapped_column(String(50), nullable=False)
     invoice_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -258,6 +316,7 @@ class Receipt(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     vendor: Mapped[str] = mapped_column(String(160), nullable=False)
     receipt_date: Mapped[date] = mapped_column(Date, nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -274,10 +333,11 @@ class Receipt(Base):
 
 class BankTransaction(Base):
     __tablename__ = "bank_transactions"
-    __table_args__ = (UniqueConstraint("owner_id", "fingerprint", name="uq_bank_owner_fingerprint"),)
+    __table_args__ = (UniqueConstraint("company_id", "fingerprint", name="uq_bank_company_fingerprint"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     booking_date: Mapped[date] = mapped_column(Date, nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -295,6 +355,7 @@ class TimeEntry(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)
     minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str] = mapped_column(String(300), nullable=False)
@@ -307,6 +368,7 @@ class Trip(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     trip_date: Mapped[date] = mapped_column(Date, nullable=False)
     kilometers: Mapped[Decimal] = mapped_column(Numeric(8, 1), nullable=False)
     origin: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -317,10 +379,11 @@ class Trip(Base):
 
 class VatDeclaration(Base):
     __tablename__ = "vat_declarations"
-    __table_args__ = (UniqueConstraint("owner_id", "year", "quarter", name="uq_vat_owner_period"),)
+    __table_args__ = (UniqueConstraint("company_id", "year", "quarter", name="uq_vat_company_period"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     year: Mapped[int] = mapped_column(Integer, nullable=False)
     quarter: Mapped[int] = mapped_column(Integer, nullable=False)
     net_cents: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -432,6 +495,14 @@ class LoginInput(BaseModel):
         return value.strip().lower()
 
 
+class CompanySummary(BaseModel):
+    id: int
+    name: str
+    kvk_number: str
+    role: str
+    role_label: str
+
+
 class UserOutput(BaseModel):
     id: int
     email: str
@@ -453,8 +524,60 @@ class UserOutput(BaseModel):
     notify_email: bool
     notify_sms: bool
     notify_backup: bool
+    company_id: int = 0
+    role: str = "owner"
+    role_label: str = "Eigenaar"
+    permissions: list[str] = []
+    companies: list[CompanySummary] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CompanyCreateInput(BaseModel):
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    kvk_number: Annotated[str, Field(pattern=r"^[0-9]{8}$")]
+    vat_number: Annotated[str | None, Field(max_length=20)] = None
+
+    @field_validator("name", "vat_number")
+    @classmethod
+    def strip_company_text(cls, value: str | None) -> str | None:
+        return clean_optional(value)
+
+
+class CompanySelectInput(BaseModel):
+    company_id: int
+
+
+class InviteInput(BaseModel):
+    email: Annotated[str, Field(min_length=3, max_length=320)]
+    role: Annotated[str, Field(max_length=20)] = "boekhouder"
+
+    @field_validator("email")
+    @classmethod
+    def normalize_invite_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("role")
+    @classmethod
+    def known_role(cls, value: str) -> str:
+        role = normalize_role(value)
+        if role == "owner":
+            raise ValueError("Een eigenaar nodig je niet uit; maak een extra bedrijf")
+        return role
+
+
+class InviteAcceptInput(BaseModel):
+    token: Annotated[str, Field(min_length=8, max_length=200)]
+    password: Annotated[str | None, Field(min_length=12, max_length=1024)] = None
+
+
+class MembershipRoleInput(BaseModel):
+    role: Annotated[str, Field(max_length=20)]
+
+    @field_validator("role")
+    @classmethod
+    def known_role(cls, value: str) -> str:
+        return normalize_role(value)
 
 
 class RegisterOutput(UserOutput):
@@ -1136,6 +1259,72 @@ def create_app(
                 headers={"Retry-After": str(retry_after)},
             )
 
+    def company_from_user(user: User) -> Company:
+        return Company(
+            name=user.company_name,
+            kvk_number=user.kvk_number,
+            vat_number=user.vat_number,
+            phone=user.phone,
+            street=user.street,
+            postal_code=user.postal_code,
+            city=user.city,
+            country=user.country or "Nederland",
+            iban=user.iban,
+            payment_term_days=user.payment_term_days,
+            invoice_prefix=user.invoice_prefix,
+            vat_scheme=user.vat_scheme,
+            ib_starter=user.ib_starter,
+            ib_hours_criterion=user.ib_hours_criterion,
+            created_by_id=user.id,
+        )
+
+    def memberships_for(session: Session, user: User) -> list[Membership]:
+        return list(
+            session.scalars(
+                select(Membership)
+                .where(Membership.user_id == user.id)
+                .order_by(Membership.id)
+            ).all()
+        )
+
+    def bind_company(user: User, company: Company, role: str) -> None:
+        user._tenant_id = company.id
+        user._company = company
+        user._role = normalize_role(role)
+
+    def tenant_id(user: User) -> int:
+        value = getattr(user, "_tenant_id", None)
+        if not value:
+            raise HTTPException(status_code=409, detail="Kies eerst een bedrijf")
+        return int(value)
+
+    def require_perm(user: User, permission: str) -> None:
+        role = getattr(user, "_role", "kijker")
+        if not has_permission(role, permission):
+            raise HTTPException(
+                status_code=403,
+                detail="Je rol in dit bedrijf mag deze actie niet uitvoeren",
+            )
+
+    def activate_company(session: Session, request: Request, user: User, company_id: int | None) -> Company:
+        rows = memberships_for(session, user)
+        if not rows:
+            raise HTTPException(
+                status_code=409,
+                detail="Dit account heeft geen bedrijf. Log uit en weer in, of maak een bedrijf aan onder Instellingen.",
+            )
+        chosen = None
+        if company_id:
+            chosen = next((row for row in rows if row.company_id == company_id), None)
+        if chosen is None:
+            chosen = next((row for row in rows if row.role == "owner"), rows[0])
+        company = session.get(Company, chosen.company_id)
+        if company is None:
+            raise HTTPException(status_code=404, detail="Bedrijf niet gevonden")
+        bind_company(user, company, chosen.role)
+        request.session["company_id"] = company.id
+        return company
+
     def get_current_user(
         request: Request, session: Session = Depends(get_session)
     ) -> User:
@@ -1147,59 +1336,101 @@ def create_app(
         if request.session.get("ver", 0) != user.session_version:
             request.session.clear()
             raise HTTPException(status_code=401, detail="Je sessie is verlopen. Log opnieuw in.")
+        activate_company(session, request, user, request.session.get("company_id"))
+        _gate_write(request, user)
         return user
 
-    def start_session(request: Request, user: User) -> None:
+    def _gate_write(request: Request, user: User) -> None:
+        if request.method in {"GET", "HEAD", "OPTIONS"}:
+            return
+        path = request.url.path
+        if path.startswith("/api/auth/") and path != "/api/auth/me":
+            return
+        if path in {"/api/account", "/api/team/accept", "/api/companies", "/api/companies/select"}:
+            return
+        if path.startswith("/api/receipts") and path.endswith("/parse"):
+            return
+        permission = write_permission_for(path, request.method)
+        if permission:
+            require_perm(user, permission)
+
+    def start_session(request: Request, user: User, session: Session | None = None) -> None:
         request.session.clear()
         request.session["user_id"] = user.id
         request.session["ver"] = user.session_version
+        if session is not None:
+            activate_company(session, request, user, None)
 
     def get_owned_invoice(session: Session, user: User, invoice_id: int) -> Invoice:
         invoice = session.scalar(
             select(Invoice)
             .options(selectinload(Invoice.lines))
-            .where(Invoice.id == invoice_id, Invoice.owner_id == user.id)
+            .where(Invoice.id == invoice_id, Invoice.company_id == tenant_id(user))
         )
         if invoice is None:
             raise HTTPException(status_code=404, detail="Factuur niet gevonden")
         return invoice
 
-    def user_output(user: User) -> dict:
+    def user_output(user: User, session: Session | None = None) -> dict:
+        company = getattr(user, "_company", None)
+        role = getattr(user, "_role", "owner")
+        companies = []
+        if session is not None:
+            rows = memberships_for(session, user)
+            for row in rows:
+                item = session.get(Company, row.company_id)
+                if item is None:
+                    continue
+                companies.append(
+                    {
+                        "id": item.id,
+                        "name": item.name,
+                        "kvk_number": item.kvk_number,
+                        "role": row.role,
+                        "role_label": role_label(row.role),
+                    }
+                )
         return {
             "id": user.id,
             "email": user.email,
-            "company_name": user.company_name,
-            "kvk_number": user.kvk_number,
-            "vat_number": user.vat_number,
-            "phone": user.phone,
-            "street": user.street,
-            "postal_code": user.postal_code,
-            "city": user.city,
-            "country": user.country,
-            "iban": user.iban,
-            "payment_term_days": user.payment_term_days,
-            "invoice_prefix": user.invoice_prefix,
-            "vat_scheme": user.vat_scheme,
-            "ib_starter": user.ib_starter,
-            "ib_hours_criterion": user.ib_hours_criterion,
+            "company_name": company.name if company else user.company_name,
+            "kvk_number": company.kvk_number if company else user.kvk_number,
+            "vat_number": company.vat_number if company else user.vat_number,
+            "phone": company.phone if company else user.phone,
+            "street": company.street if company else user.street,
+            "postal_code": company.postal_code if company else user.postal_code,
+            "city": company.city if company else user.city,
+            "country": (company.country if company else user.country) or "Nederland",
+            "iban": company.iban if company else user.iban,
+            "payment_term_days": company.payment_term_days if company else user.payment_term_days,
+            "invoice_prefix": company.invoice_prefix if company else user.invoice_prefix,
+            "vat_scheme": company.vat_scheme if company else user.vat_scheme,
+            "ib_starter": company.ib_starter if company else user.ib_starter,
+            "ib_hours_criterion": company.ib_hours_criterion if company else user.ib_hours_criterion,
             "email_verified": user.email_verified_at is not None,
             "notify_email": user.notify_email,
             "notify_sms": user.notify_sms,
             "notify_backup": user.notify_backup,
+            "company_id": getattr(user, "_tenant_id", 0) or 0,
+            "role": role,
+            "role_label": role_label(role),
+            "permissions": sorted(permissions_for(role)),
+            "companies": companies,
         }
 
     def supplier_details(user: User) -> dict[str, str]:
+        company = getattr(user, "_company", None)
         return {
-            "name": user.company_name,
-            "street": user.street or "",
-            "postal_code": user.postal_code or "",
-            "city": user.city or "",
-            "country": user.country or "Nederland",
+            "name": (company.name if company else user.company_name),
+            "street": (company.street if company else user.street) or "",
+            "postal_code": (company.postal_code if company else user.postal_code) or "",
+            "city": (company.city if company else user.city) or "",
+            "country": (company.country if company else user.country) or "Nederland",
             "email": user.email,
-            "phone": user.phone or "",
-            "vat_number": user.vat_number or "",
-            "kvk_number": user.kvk_number,
-            "iban": user.iban or "",
+            "phone": (company.phone if company else user.phone) or "",
+            "vat_number": (company.vat_number if company else user.vat_number) or "",
+            "kvk_number": company.kvk_number if company else user.kvk_number,
+            "iban": (company.iban if company else user.iban) or "",
         }
 
     def customer_details(customer: Customer) -> dict[str, str]:
@@ -1242,7 +1473,7 @@ def create_app(
         quarter = (day.month - 1) // 3 + 1
         approved = session.scalar(
             select(VatDeclaration.id).where(
-                VatDeclaration.owner_id == user.id,
+                VatDeclaration.company_id == tenant_id(user),
                 VatDeclaration.year == day.year,
                 VatDeclaration.quarter == quarter,
             )
@@ -1303,11 +1534,12 @@ def create_app(
 
     def next_invoice_number(session: Session, user: User) -> str:
         year = date.today().year
-        prefix = user.invoice_prefix or ""
+        company = getattr(user, "_company", None)
+        prefix = (company.invoice_prefix if company is not None else user.invoice_prefix) or ""
         base = f"{prefix}{year}-"
         numbers = session.scalars(
             select(Invoice.number).where(
-                Invoice.owner_id == user.id, Invoice.number.like(f"{base}%")
+                Invoice.company_id == tenant_id(user), Invoice.number.like(f"{base}%")
             )
         ).all()
         highest = 0
@@ -1319,7 +1551,9 @@ def create_app(
 
     def deductible_vat(receipt: Receipt, user: User) -> int:
         """VAT on a purchase that may be deducted as voorbelasting (rubric 5b)."""
-        if user.vat_scheme == "kor" or receipt.vat_origin == "none":
+        company = getattr(user, "_company", None)
+        scheme = company.vat_scheme if company is not None else user.vat_scheme
+        if scheme == "kor" or receipt.vat_origin == "none":
             return 0
         if not expense_category(receipt.category).vat_deductible:
             return 0
@@ -1369,14 +1603,14 @@ def create_app(
         start, end = date(year, 1, 1), date(year, 12, 31)
         invoices = session.scalars(
             select(Invoice).where(
-                Invoice.owner_id == user.id,
+                Invoice.company_id == tenant_id(user),
                 Invoice.invoice_date >= start,
                 Invoice.invoice_date <= end,
             )
         ).all()
         receipts = session.scalars(
             select(Receipt).where(
-                Receipt.owner_id == user.id,
+                Receipt.company_id == tenant_id(user),
                 Receipt.receipt_date >= start,
                 Receipt.receipt_date <= end,
             )
@@ -1384,21 +1618,21 @@ def create_app(
         # Depreciation also runs for assets bought in earlier years.
         assets = session.scalars(
             select(Receipt).where(
-                Receipt.owner_id == user.id,
+                Receipt.company_id == tenant_id(user),
                 Receipt.life_years.is_not(None),
                 Receipt.receipt_date <= end,
             )
         ).all()
         entries = session.scalars(
             select(TimeEntry).where(
-                TimeEntry.owner_id == user.id,
+                TimeEntry.company_id == tenant_id(user),
                 TimeEntry.entry_date >= start,
                 TimeEntry.entry_date <= end,
             )
         ).all()
         trips = session.scalars(
             select(Trip).where(
-                Trip.owner_id == user.id,
+                Trip.company_id == tenant_id(user),
                 Trip.trip_date >= start,
                 Trip.trip_date <= end,
             )
@@ -1455,7 +1689,7 @@ def create_app(
         hours_minutes = sum(entry.minutes for entry in entries)
         hours_met = hours_minutes >= rules.hours_criterion * 60
         tax = estimate_income_tax(
-            rules, profit_cents, hours_criterion_met=hours_met, starter=user.ib_starter
+            rules, profit_cents, hours_criterion_met=hours_met, starter=(getattr(user, "_company", None) or user).ib_starter
         )
         note = (
             f"Tarieven {rules.year} (nog niet gepubliceerd voor {year})."
@@ -1479,7 +1713,7 @@ def create_app(
             hours_criterion=rules.hours_criterion,
             hours_met=hours_met,
             kilometers=kilometers.quantize(Decimal("0.1")),
-            starter=user.ib_starter,
+            starter=(getattr(user, "_company", None) or user).ib_starter,
             self_employed_deduction=tax.self_employed_deduction,
             starter_deduction=tax.starter_deduction,
             mkb_exemption=tax.mkb_exemption,
@@ -1502,7 +1736,7 @@ def create_app(
             select(Invoice)
             .options(selectinload(Invoice.lines))
             .where(
-                Invoice.owner_id == user.id,
+                Invoice.company_id == tenant_id(user),
                 Invoice.invoice_date >= start,
                 Invoice.invoice_date <= end,
             )
@@ -1555,10 +1789,11 @@ def create_app(
                 rubric["net"] += line.net_cents
                 rubric["vat"] += line.vat_cents
 
-        kor = user.vat_scheme == "kor"
+        company = getattr(user, "_company", None)
+        kor = (company.vat_scheme if company is not None else user.vat_scheme) == "kor"
         receipts = session.scalars(
             select(Receipt).where(
-                Receipt.owner_id == user.id,
+                Receipt.company_id == tenant_id(user),
                 Receipt.receipt_date >= start,
                 Receipt.receipt_date <= end,
             )
@@ -1621,14 +1856,14 @@ def create_app(
 
         declaration = session.scalar(
             select(VatDeclaration).where(
-                VatDeclaration.owner_id == user.id,
+                VatDeclaration.company_id == tenant_id(user),
                 VatDeclaration.year == year,
                 VatDeclaration.quarter == quarter,
             )
         )
         bank_rows = session.scalars(
             select(BankTransaction).where(
-                BankTransaction.owner_id == user.id,
+                BankTransaction.company_id == tenant_id(user),
                 BankTransaction.booking_date >= start,
                 BankTransaction.booking_date <= end,
             )
@@ -1710,8 +1945,13 @@ def create_app(
                 status_code=409, detail="Dit e-mailadres heeft al een account"
             ) from error
         session.refresh(user)
+        company = company_from_user(user)
+        session.add(company)
+        session.flush()
+        session.add(Membership(user_id=user.id, company_id=company.id, role="owner"))
         audit(session, user.id, "account.register", None, client_ip(request))
         session.commit()
+        session.refresh(user)
 
         verification_required = mailer.configured
         if verification_required:
@@ -1727,8 +1967,8 @@ def create_app(
                 }
             )
         else:
-            start_session(request, user)
-        return {**user_output(user), "verification_required": verification_required}
+            start_session(request, user, session)
+        return {**user_output(user, session), "verification_required": verification_required}
 
     @app.post("/api/auth/login", response_model=UserOutput)
     def login(
@@ -1745,14 +1985,16 @@ def create_app(
                 status_code=403,
                 detail="Bevestig eerst je e-mailadres. Check je inbox of vraag een nieuwe link aan.",
             )
-        start_session(request, user)
+        start_session(request, user, session)
         audit(session, user.id, "account.login", None, client_ip(request))
         session.commit()
-        return user_output(user)
+        return user_output(user, session)
 
     @app.get("/api/auth/me", response_model=UserOutput)
-    def current_user(user: User = Depends(get_current_user)):
-        return user_output(user)
+    def current_user(
+        session: Session = Depends(get_session), user: User = Depends(get_current_user)
+    ):
+        return user_output(user, session)
 
     @app.patch("/api/auth/me", response_model=UserOutput)
     def update_profile(
@@ -1761,12 +2003,47 @@ def create_app(
         session: Session = Depends(get_session),
         user: User = Depends(get_current_user),
     ):
-        for field, value in payload.model_dump().items():
-            setattr(user, field, value)
+        data = payload.model_dump()
+        company = getattr(user, "_company", None)
+        user.notify_email = data["notify_email"]
+        user.notify_sms = data["notify_sms"]
+        user.notify_backup = data["notify_backup"]
+        if company is not None:
+            company.name = data["company_name"]
+            company.kvk_number = data["kvk_number"]
+            company.vat_number = data["vat_number"]
+            company.phone = data["phone"]
+            company.street = data["street"]
+            company.postal_code = data["postal_code"]
+            company.city = data["city"]
+            company.country = data["country"]
+            company.iban = data["iban"]
+            company.payment_term_days = data["payment_term_days"]
+            company.invoice_prefix = data["invoice_prefix"]
+            company.vat_scheme = data["vat_scheme"]
+            company.ib_starter = data["ib_starter"]
+            company.ib_hours_criterion = data["ib_hours_criterion"]
+        user.company_name = data["company_name"]
+        user.kvk_number = data["kvk_number"]
+        user.vat_number = data["vat_number"]
+        user.phone = data["phone"]
+        user.street = data["street"]
+        user.postal_code = data["postal_code"]
+        user.city = data["city"]
+        user.country = data["country"]
+        user.iban = data["iban"]
+        user.payment_term_days = data["payment_term_days"]
+        user.invoice_prefix = data["invoice_prefix"]
+        user.vat_scheme = data["vat_scheme"]
+        user.ib_starter = data["ib_starter"]
+        user.ib_hours_criterion = data["ib_hours_criterion"]
         audit(session, user.id, "account.profile", None, client_ip(request))
         session.commit()
         session.refresh(user)
-        return user_output(user)
+        if company is not None:
+            session.refresh(company)
+            bind_company(user, company, getattr(user, "_role", "owner"))
+        return user_output(user, session)
 
     @app.post("/api/auth/password", status_code=204)
     def change_password(
@@ -1782,7 +2059,7 @@ def create_app(
         user.session_version += 1
         audit(session, user.id, "account.password", None, client_ip(request))
         session.commit()
-        start_session(request, user)
+        start_session(request, user, session)
 
     @app.post("/api/auth/logout", status_code=204)
     def logout(request: Request, _: User = Depends(get_current_user)):
@@ -1836,8 +2113,8 @@ def create_app(
         reset.used_at = utcnow()
         audit(session, user.id, "account.password_reset", None, client_ip(request))
         session.commit()
-        start_session(request, user)
-        return user_output(user)
+        start_session(request, user, session)
+        return user_output(user, session)
 
     @app.post("/api/auth/verify-email", response_model=UserOutput)
     def verify_email(
@@ -1862,8 +2139,8 @@ def create_app(
         user.verification_expires_at = None
         audit(session, user.id, "account.email_verified", None, client_ip(request))
         session.commit()
-        start_session(request, user)
-        return user_output(user)
+        start_session(request, user, session)
+        return user_output(user, session)
 
     @app.post("/api/auth/resend-verification", status_code=202)
     def resend_verification(
@@ -1916,30 +2193,30 @@ def create_app(
         audit(session, user.id, "account.export", None, client_ip(request))
         session.commit()
         customers = session.scalars(
-            select(Customer).where(Customer.owner_id == user.id).order_by(Customer.id)
+            select(Customer).where(Customer.company_id == tenant_id(user)).order_by(Customer.id)
         ).all()
         invoices = session.scalars(
             select(Invoice)
             .options(selectinload(Invoice.lines))
-            .where(Invoice.owner_id == user.id)
+            .where(Invoice.company_id == tenant_id(user))
             .order_by(Invoice.id)
         ).all()
         receipts = session.scalars(
-            select(Receipt).where(Receipt.owner_id == user.id).order_by(Receipt.id)
+            select(Receipt).where(Receipt.company_id == tenant_id(user)).order_by(Receipt.id)
         ).all()
         declarations = session.scalars(
-            select(VatDeclaration).where(VatDeclaration.owner_id == user.id)
+            select(VatDeclaration).where(VatDeclaration.company_id == tenant_id(user))
         ).all()
         bank = session.scalars(
             select(BankTransaction)
-            .where(BankTransaction.owner_id == user.id)
+            .where(BankTransaction.company_id == tenant_id(user))
             .order_by(BankTransaction.booking_date, BankTransaction.id)
         ).all()
         hours = session.scalars(
-            select(TimeEntry).where(TimeEntry.owner_id == user.id).order_by(TimeEntry.id)
+            select(TimeEntry).where(TimeEntry.company_id == tenant_id(user)).order_by(TimeEntry.id)
         ).all()
         trips = session.scalars(
-            select(Trip).where(Trip.owner_id == user.id).order_by(Trip.id)
+            select(Trip).where(Trip.company_id == tenant_id(user)).order_by(Trip.id)
         ).all()
         events = session.scalars(
             select(AuditEvent).where(AuditEvent.owner_id == user.id).order_by(AuditEvent.id)
@@ -1947,7 +2224,7 @@ def create_app(
 
         payload = {
             "exported_at": utcnow().isoformat(),
-            "account": user_output(user),
+            "account": user_output(user, session),
             "customers": [
                 {
                     "id": customer.id,
@@ -2106,30 +2383,41 @@ def create_app(
             raise HTTPException(status_code=400, detail="Je wachtwoord is onjuist")
 
         user_id = user.id
-        for receipt in session.scalars(select(Receipt).where(Receipt.owner_id == user_id)).all():
-            path = (upload_root / receipt.filename).resolve()
-            if upload_root.resolve() in path.parents:
-                path.unlink(missing_ok=True)
-        directory = upload_root / str(user_id)
-        if directory.is_dir():
-            for child in directory.iterdir():
-                child.unlink(missing_ok=True)
-            directory.rmdir()
-
-        invoice_ids = select(Invoice.id).where(Invoice.owner_id == user_id)
-        session.execute(delete(BankTransaction).where(BankTransaction.owner_id == user_id))
-        session.execute(delete(TimeEntry).where(TimeEntry.owner_id == user_id))
-        session.execute(delete(Trip).where(Trip.owner_id == user_id))
-        session.execute(
-            update(Invoice).where(Invoice.owner_id == user_id).values(credited_invoice_id=None)
-        )
-        session.execute(delete(InvoiceLine).where(InvoiceLine.invoice_id.in_(invoice_ids)))
-        session.execute(delete(Invoice).where(Invoice.owner_id == user_id))
-        session.execute(delete(Receipt).where(Receipt.owner_id == user_id))
-        session.execute(delete(VatDeclaration).where(VatDeclaration.owner_id == user_id))
+        owned = session.scalars(
+            select(Membership.company_id).where(
+                Membership.user_id == user_id, Membership.role == "owner"
+            )
+        ).all()
+        for company_id in owned:
+            for receipt in session.scalars(select(Receipt).where(Receipt.company_id == company_id)).all():
+                path = (upload_root / receipt.filename).resolve()
+                if upload_root.resolve() in path.parents:
+                    path.unlink(missing_ok=True)
+            directory = upload_root / str(company_id)
+            if directory.is_dir():
+                for child in directory.iterdir():
+                    child.unlink(missing_ok=True)
+                directory.rmdir()
+            invoice_ids = select(Invoice.id).where(Invoice.company_id == company_id)
+            session.execute(delete(BankTransaction).where(BankTransaction.company_id == company_id))
+            session.execute(delete(TimeEntry).where(TimeEntry.company_id == company_id))
+            session.execute(delete(Trip).where(Trip.company_id == company_id))
+            session.execute(
+                update(Invoice).where(Invoice.company_id == company_id).values(credited_invoice_id=None)
+            )
+            session.execute(delete(InvoiceLine).where(InvoiceLine.invoice_id.in_(invoice_ids)))
+            session.execute(delete(Invoice).where(Invoice.company_id == company_id))
+            session.execute(delete(Receipt).where(Receipt.company_id == company_id))
+            session.execute(delete(VatDeclaration).where(VatDeclaration.company_id == company_id))
+            session.execute(delete(Customer).where(Customer.company_id == company_id))
+            session.execute(delete(TeamInvite).where(TeamInvite.company_id == company_id))
+            session.execute(delete(Membership).where(Membership.company_id == company_id))
+            company = session.get(Company, company_id)
+            if company is not None:
+                session.delete(company)
+        session.execute(delete(Membership).where(Membership.user_id == user_id))
         session.execute(delete(PasswordReset).where(PasswordReset.user_id == user_id))
         session.execute(delete(AuditEvent).where(AuditEvent.owner_id == user_id))
-        session.execute(delete(Customer).where(Customer.owner_id == user_id))
         session.delete(user)
         session.commit()
         request.session.clear()
@@ -2143,7 +2431,7 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         return session.scalars(
-            select(Customer).where(Customer.owner_id == user.id).order_by(Customer.name)
+            select(Customer).where(Customer.company_id == tenant_id(user)).order_by(Customer.name)
         ).all()
 
     @app.post(
@@ -2154,7 +2442,7 @@ def create_app(
         session: Session = Depends(get_session),
         user: User = Depends(get_current_user),
     ):
-        customer = Customer(**payload.model_dump(), owner_id=user.id)
+        customer = Customer(**payload.model_dump(), owner_id=user.id, company_id=tenant_id(user))
         session.add(customer)
         session.commit()
         session.refresh(customer)
@@ -2168,7 +2456,7 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         customer = session.get(Customer, customer_id)
-        if customer is None or customer.owner_id != user.id:
+        if customer is None or customer.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Klant niet gevonden")
         for field, value in payload.model_dump().items():
             setattr(customer, field, value)
@@ -2183,7 +2471,7 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         customer = session.get(Customer, customer_id)
-        if customer is None or customer.owner_id != user.id:
+        if customer is None or customer.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Klant niet gevonden")
         has_invoices = session.scalar(
             select(Invoice.id).where(Invoice.customer_id == customer.id).limit(1)
@@ -2206,7 +2494,7 @@ def create_app(
         return session.scalars(
             select(Invoice)
             .options(selectinload(Invoice.lines))
-            .where(Invoice.owner_id == user.id)
+            .where(Invoice.company_id == tenant_id(user))
             .order_by(Invoice.invoice_date.desc(), Invoice.id.desc())
         ).all()
 
@@ -2234,16 +2522,18 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         customer = session.get(Customer, payload.customer_id)
-        if customer is None or customer.owner_id != user.id:
+        if customer is None or customer.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Klant niet gevonden")
 
         duplicate = session.scalar(
-            select(Invoice.id).where(Invoice.owner_id == user.id, Invoice.number == payload.number)
+            select(Invoice.id).where(Invoice.company_id == tenant_id(user), Invoice.number == payload.number)
         )
         if duplicate is not None:
             raise HTTPException(status_code=409, detail="Factuurnummer bestaat al")
 
-        treatment = "kor" if user.vat_scheme == "kor" else payload.vat_treatment
+        company = getattr(user, "_company", None)
+        scheme = company.vat_scheme if company is not None else user.vat_scheme
+        treatment = "kor" if scheme == "kor" else payload.vat_treatment
         if treatment != "standard" and any(line.vat_rate != 0 for line in payload.lines):
             raise HTTPException(
                 status_code=422,
@@ -2289,7 +2579,7 @@ def create_app(
             )
 
         invoice = Invoice(
-            owner_id=user.id,
+            owner_id=user.id, company_id=tenant_id(user),
             customer_id=payload.customer_id,
             number=payload.number,
             invoice_date=payload.invoice_date,
@@ -2343,7 +2633,7 @@ def create_app(
             )
         number = payload.number or next_invoice_number(session, user)
         duplicate = session.scalar(
-            select(Invoice.id).where(Invoice.owner_id == user.id, Invoice.number == number)
+            select(Invoice.id).where(Invoice.company_id == tenant_id(user), Invoice.number == number)
         )
         if duplicate is not None:
             raise HTTPException(status_code=409, detail="Factuurnummer bestaat al")
@@ -2351,7 +2641,7 @@ def create_app(
 
         supplier, recipient = invoice_parties(original, user, customer)
         credit = Invoice(
-            owner_id=user.id,
+            owner_id=user.id, company_id=tenant_id(user),
             customer_id=original.customer_id,
             number=number,
             invoice_date=credit_date,
@@ -2455,7 +2745,7 @@ def create_app(
 
         pdf = invoice_pdf_bytes(session, user, customer, invoice)
         sent = mailer.send_invoice(
-            sender_name=user.company_name,
+            sender_name=(getattr(user, "_company", None).name if getattr(user, "_company", None) else user.company_name),
             customer_name=customer_data["name"],
             customer_email=recipient,
             invoice_number=invoice.number,
@@ -2506,7 +2796,7 @@ def create_app(
             )
         pdf = invoice_pdf_bytes(session, user, customer, invoice)
         sent = mailer.send_reminder(
-            sender_name=user.company_name,
+            sender_name=(getattr(user, "_company", None).name if getattr(user, "_company", None) else user.company_name),
             customer_name=customer_data["name"],
             customer_email=recipient,
             invoice_number=invoice.number,
@@ -2593,14 +2883,14 @@ def create_app(
             )
         declaration = session.scalar(
             select(VatDeclaration).where(
-                VatDeclaration.owner_id == user.id,
+                VatDeclaration.company_id == tenant_id(user),
                 VatDeclaration.year == payload.year,
                 VatDeclaration.quarter == payload.quarter,
             )
         )
         if declaration is None:
             declaration = VatDeclaration(
-                owner_id=user.id,
+                owner_id=user.id, company_id=tenant_id(user),
                 year=payload.year,
                 quarter=payload.quarter,
                 net_cents=quarter.net_cents,
@@ -2627,7 +2917,7 @@ def create_app(
             raise HTTPException(status_code=422, detail="Ongeldig kwartaal")
         declaration = session.scalar(
             select(VatDeclaration).where(
-                VatDeclaration.owner_id == user.id,
+                VatDeclaration.company_id == tenant_id(user),
                 VatDeclaration.year == year,
                 VatDeclaration.quarter == quarter,
             )
@@ -2645,7 +2935,7 @@ def create_app(
     ):
         receipts = session.scalars(
             select(Receipt)
-            .where(Receipt.owner_id == user.id)
+            .where(Receipt.company_id == tenant_id(user))
             .order_by(Receipt.receipt_date.desc(), Receipt.id.desc())
         ).all()
         return [receipt_output(receipt, user) for receipt in receipts]
@@ -2665,7 +2955,34 @@ def create_app(
                 for category in EXPENSE_CATEGORIES
             ],
             "vat_origins": [{"key": key, "label": label} for key, label in PURCHASE_VAT_ORIGINS.items()],
+            "roles": [{"key": key, "label": label} for key, label in ROLES.items() if key != "owner"],
         }
+
+    @app.post("/api/receipts/parse")
+    async def parse_receipt(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        user: User = Depends(get_current_user),
+    ):
+        enforce(request, "receipt-parse", 40, 3600, str(user.id))
+        require_perm(user, "receipts.write")
+        content_type = file.content_type or ""
+        if content_type not in ALLOWED_RECEIPT_TYPES:
+            raise HTTPException(
+                status_code=415,
+                detail="Alleen JPG, PNG, WEBP of PDF-bestanden zijn toegestaan",
+            )
+        max_bytes = settings.max_upload_bytes
+        data = await file.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Het bestand is groter dan {max_bytes // (1024 * 1024)} MB",
+            )
+        if not data:
+            raise HTTPException(status_code=422, detail="Het bestand is leeg")
+        suggestion = parse_receipt_file(data, content_type, file.filename or "")
+        return suggestion.as_dict()
 
     @app.post(
         "/api/receipts", response_model=ReceiptOutput, status_code=status.HTTP_201_CREATED
@@ -2741,13 +3058,13 @@ def create_app(
         if not data:
             raise HTTPException(status_code=422, detail="Het bestand is leeg")
 
-        directory = upload_root / str(user.id)
+        directory = upload_root / str(tenant_id(user))
         directory.mkdir(parents=True, exist_ok=True)
         filename = f"{uuid.uuid4().hex}{suffix}"
         (directory / filename).write_bytes(data)
 
         receipt = Receipt(
-            owner_id=user.id,
+            owner_id=user.id, company_id=tenant_id(user),
             vendor=vendor.strip(),
             receipt_date=receipt_date,
             amount_cents=to_cents(amount),
@@ -2755,7 +3072,7 @@ def create_app(
             vat_origin=vat_origin,
             category=category_key,
             life_years=life_years,
-            filename=f"{user.id}/{filename}",
+            filename=f"{tenant_id(user)}/{filename}",
             content_type=content_type,
             size_bytes=len(data),
         )
@@ -2776,7 +3093,7 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         receipt = session.get(Receipt, receipt_id)
-        if receipt is None or receipt.owner_id != user.id:
+        if receipt is None or receipt.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Bon niet gevonden")
         file_path = (upload_root / receipt.filename).resolve()
         if upload_root.resolve() not in file_path.parents or not file_path.is_file():
@@ -2796,7 +3113,7 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         receipt = session.get(Receipt, receipt_id)
-        if receipt is None or receipt.owner_id != user.id:
+        if receipt is None or receipt.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Bon niet gevonden")
         ensure_quarter_open(session, user, receipt.receipt_date)
         file_path = (upload_root / receipt.filename).resolve()
@@ -2854,7 +3171,7 @@ def create_app(
 
     def get_owned_bank(session: Session, user: User, transaction_id: int) -> BankTransaction:
         item = session.get(BankTransaction, transaction_id)
-        if item is None or item.owner_id != user.id:
+        if item is None or item.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Transactie niet gevonden")
         return item
 
@@ -2880,19 +3197,19 @@ def create_app(
         except StatementError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-        invoices = session.scalars(select(Invoice).where(Invoice.owner_id == user.id)).all()
-        receipts = session.scalars(select(Receipt).where(Receipt.owner_id == user.id)).all()
+        invoices = session.scalars(select(Invoice).where(Invoice.company_id == tenant_id(user))).all()
+        receipts = session.scalars(select(Receipt).where(Receipt.company_id == tenant_id(user))).all()
         existing = {
             row[0]
             for row in session.execute(
-                select(BankTransaction.fingerprint).where(BankTransaction.owner_id == user.id)
+                select(BankTransaction.fingerprint).where(BankTransaction.company_id == tenant_id(user))
             )
         }
         taken_invoices = {invoice.id for invoice in invoices if invoice.status == "paid"}
         taken_receipts = set()
         for linked in session.scalars(
             select(BankTransaction).where(
-                BankTransaction.owner_id == user.id,
+                BankTransaction.company_id == tenant_id(user),
                 BankTransaction.receipt_id.is_not(None),
             )
         ):
@@ -2918,7 +3235,7 @@ def create_app(
                 duplicates += 1
                 continue
             item = BankTransaction(
-                owner_id=user.id,
+                owner_id=user.id, company_id=tenant_id(user),
                 fingerprint=fingerprint,
                 booking_date=line.booking_date,
                 amount_cents=line.amount_cents,
@@ -2960,11 +3277,11 @@ def create_app(
     ):
         items = session.scalars(
             select(BankTransaction)
-            .where(BankTransaction.owner_id == user.id)
+            .where(BankTransaction.company_id == tenant_id(user))
             .order_by(BankTransaction.booking_date.desc(), BankTransaction.id.desc())
         ).all()
-        invoices = session.scalars(select(Invoice).where(Invoice.owner_id == user.id)).all()
-        receipts = session.scalars(select(Receipt).where(Receipt.owner_id == user.id)).all()
+        invoices = session.scalars(select(Invoice).where(Invoice.company_id == tenant_id(user))).all()
+        receipts = session.scalars(select(Receipt).where(Receipt.company_id == tenant_id(user))).all()
         taken_invoices = {item.invoice_id for item in items if item.invoice_id}
         taken_receipts = {item.receipt_id for item in items if item.receipt_id}
         return [
@@ -3006,7 +3323,7 @@ def create_app(
             if payload.receipt_id is None:
                 raise HTTPException(status_code=422, detail="Kies de bon die bij deze afschrijving hoort")
             receipt = session.get(Receipt, payload.receipt_id)
-            if receipt is None or receipt.owner_id != user.id:
+            if receipt is None or receipt.company_id != tenant_id(user):
                 raise HTTPException(status_code=404, detail="Bon niet gevonden")
             item.status = "receipt"
             item.receipt_id = receipt.id
@@ -3035,7 +3352,7 @@ def create_app(
         if customer_id is None:
             return None
         customer = session.get(Customer, customer_id)
-        if customer is None or customer.owner_id != user.id:
+        if customer is None or customer.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Klant niet gevonden")
         return customer.id
 
@@ -3045,7 +3362,7 @@ def create_app(
         session: Session = Depends(get_session),
         user: User = Depends(get_current_user),
     ):
-        query = select(TimeEntry).where(TimeEntry.owner_id == user.id)
+        query = select(TimeEntry).where(TimeEntry.company_id == tenant_id(user))
         if year:
             query = query.where(TimeEntry.entry_date >= date(year, 1, 1), TimeEntry.entry_date <= date(year, 12, 31))
         entries = session.scalars(query.order_by(TimeEntry.entry_date.desc(), TimeEntry.id.desc())).all()
@@ -3063,14 +3380,14 @@ def create_app(
         day_total = sum(
             session.scalars(
                 select(TimeEntry.minutes).where(
-                    TimeEntry.owner_id == user.id, TimeEntry.entry_date == payload.entry_date
+                    TimeEntry.company_id == tenant_id(user), TimeEntry.entry_date == payload.entry_date
                 )
             ).all()
         )
         if day_total + minutes > 24 * 60:
             raise HTTPException(status_code=422, detail="Op één dag kun je maximaal 24 uur registreren")
         entry = TimeEntry(
-            owner_id=user.id,
+            owner_id=user.id, company_id=tenant_id(user),
             entry_date=payload.entry_date,
             minutes=minutes,
             description=payload.description,
@@ -3088,7 +3405,7 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         entry = session.get(TimeEntry, entry_id)
-        if entry is None or entry.owner_id != user.id:
+        if entry is None or entry.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Regel niet gevonden")
         session.delete(entry)
         session.commit()
@@ -3099,7 +3416,7 @@ def create_app(
         session: Session = Depends(get_session),
         user: User = Depends(get_current_user),
     ):
-        query = select(Trip).where(Trip.owner_id == user.id)
+        query = select(Trip).where(Trip.company_id == tenant_id(user))
         if year:
             query = query.where(Trip.trip_date >= date(year, 1, 1), Trip.trip_date <= date(year, 12, 31))
         return session.scalars(query.order_by(Trip.trip_date.desc(), Trip.id.desc())).all()
@@ -3112,7 +3429,7 @@ def create_app(
     ):
         if payload.trip_date > date.today():
             raise HTTPException(status_code=422, detail="Je kunt geen rit in de toekomst bijhouden")
-        trip = Trip(owner_id=user.id, **payload.model_dump())
+        trip = Trip(owner_id=user.id, company_id=tenant_id(user), **payload.model_dump())
         session.add(trip)
         session.commit()
         session.refresh(trip)
@@ -3125,7 +3442,7 @@ def create_app(
         user: User = Depends(get_current_user),
     ):
         trip = session.get(Trip, trip_id)
-        if trip is None or trip.owner_id != user.id:
+        if trip is None or trip.company_id != tenant_id(user):
             raise HTTPException(status_code=404, detail="Rit niet gevonden")
         session.delete(trip)
         session.commit()
@@ -3140,6 +3457,282 @@ def create_app(
         if chosen < 2000 or chosen > 2100:
             raise HTTPException(status_code=422, detail="Ongeldig jaar")
         return build_year_overview(session, user, chosen)
+
+    # -- Companies and team ----------------------------------------------
+
+    @app.get("/api/companies")
+    def list_companies(
+        session: Session = Depends(get_session), user: User = Depends(get_current_user)
+    ):
+        return user_output(user, session)["companies"]
+
+    @app.post("/api/companies", status_code=201)
+    def create_company(
+        payload: CompanyCreateInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        company = Company(
+            name=payload.name,
+            kvk_number=payload.kvk_number,
+            vat_number=payload.vat_number,
+            created_by_id=user.id,
+        )
+        session.add(company)
+        session.flush()
+        session.add(Membership(user_id=user.id, company_id=company.id, role="owner"))
+        audit(session, user.id, "company.create", company.name, client_ip(request))
+        session.commit()
+        activate_company(session, request, user, company.id)
+        return user_output(user, session)
+
+    @app.post("/api/companies/select")
+    def select_company(
+        payload: CompanySelectInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        activate_company(session, request, user, payload.company_id)
+        if tenant_id(user) != payload.company_id:
+            raise HTTPException(status_code=404, detail="Dit bedrijf hoort niet bij jouw account")
+        return user_output(user, session)
+
+    @app.get("/api/team")
+    def list_team(
+        session: Session = Depends(get_session), user: User = Depends(get_current_user)
+    ):
+        require_perm(user, "team.read")
+        company_id = tenant_id(user)
+        members = []
+        for row in session.scalars(
+            select(Membership).where(Membership.company_id == company_id).order_by(Membership.id)
+        ).all():
+            member = session.get(User, row.user_id)
+            if member is None:
+                continue
+            members.append(
+                {
+                    "id": row.id,
+                    "user_id": member.id,
+                    "email": member.email,
+                    "role": row.role,
+                    "role_label": role_label(row.role),
+                    "self": member.id == user.id,
+                }
+            )
+        invites = []
+        for invite in session.scalars(
+            select(TeamInvite)
+            .where(TeamInvite.company_id == company_id, TeamInvite.accepted_at.is_(None))
+            .order_by(TeamInvite.id.desc())
+        ).all():
+            invites.append(
+                {
+                    "id": invite.id,
+                    "email": invite.email,
+                    "role": invite.role,
+                    "role_label": role_label(invite.role),
+                    "expires_at": invite.expires_at,
+                }
+            )
+        return {"members": members, "invites": invites, "roles": [
+            {"key": key, "label": label} for key, label in ROLES.items() if key != "owner"
+        ]}
+
+    @app.post("/api/team/invites", status_code=201)
+    def invite_member(
+        payload: InviteInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        require_perm(user, "team.write")
+        company = getattr(user, "_company")
+        if payload.email == user.email:
+            raise HTTPException(status_code=422, detail="Je kunt jezelf niet uitnodigen")
+        existing_user = session.scalar(select(User).where(User.email == payload.email))
+        if existing_user is not None:
+            already = session.scalar(
+                select(Membership).where(
+                    Membership.user_id == existing_user.id,
+                    Membership.company_id == company.id,
+                )
+            )
+            if already is not None:
+                raise HTTPException(status_code=409, detail="Deze persoon zit al in dit bedrijf")
+        token, hashed = new_token()
+        invite = TeamInvite(
+            company_id=company.id,
+            email=payload.email,
+            role=payload.role,
+            token_hash=hashed,
+            invited_by_id=user.id,
+            expires_at=utcnow() + timedelta(days=7),
+        )
+        session.add(invite)
+        session.flush()
+        mailer.send_team_invite(
+            {
+                "email": payload.email,
+                "company_name": company.name,
+                "role_label": role_label(payload.role),
+                "inviter": user.email,
+                "token": token,
+            }
+        )
+        audit(session, user.id, "team.invite", payload.email, client_ip(request))
+        session.commit()
+        return {"id": invite.id, "email": invite.email, "role": invite.role}
+
+    @app.get("/api/team/invites/preview")
+    def preview_invite(token: str, session: Session = Depends(get_session)):
+        invite = session.scalar(select(TeamInvite).where(TeamInvite.token_hash == token_hash(token)))
+        if invite is None or invite.accepted_at is not None:
+            raise HTTPException(status_code=400, detail="Deze uitnodiging is ongeldig of al gebruikt")
+        expires_at = invite.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < utcnow():
+            raise HTTPException(status_code=400, detail="Deze uitnodiging is verlopen")
+        company = session.get(Company, invite.company_id)
+        return {
+            "email": invite.email,
+            "company_name": company.name if company else "",
+            "role": invite.role,
+            "role_label": role_label(invite.role),
+            "has_account": session.scalar(select(User.id).where(User.email == invite.email)) is not None,
+        }
+
+    @app.post("/api/team/accept")
+    def accept_invite(
+        payload: InviteAcceptInput,
+        request: Request,
+        session: Session = Depends(get_session),
+    ):
+        invite = session.scalar(
+            select(TeamInvite).where(TeamInvite.token_hash == token_hash(payload.token))
+        )
+        if invite is None or invite.accepted_at is not None:
+            raise HTTPException(status_code=400, detail="Deze uitnodiging is ongeldig of al gebruikt")
+        expires_at = invite.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < utcnow():
+            raise HTTPException(status_code=400, detail="Deze uitnodiging is verlopen")
+        company = session.get(Company, invite.company_id)
+        if company is None:
+            raise HTTPException(status_code=400, detail="Dit bedrijf bestaat niet meer")
+        user_id = request.session.get("user_id")
+        user = session.get(User, user_id) if user_id else None
+        if user is None:
+            existing = session.scalar(select(User).where(User.email == invite.email))
+            if existing is not None:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Log in met het uitgenodigde e-mailadres om de uitnodiging te accepteren",
+                )
+            if not payload.password:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Kies een wachtwoord van minimaal 12 tekens om je account aan te maken",
+                )
+            user = User(
+                email=invite.email,
+                password_hash=hash_password(payload.password),
+                company_name=company.name,
+                kvk_number=company.kvk_number,
+                vat_number=company.vat_number,
+                email_verified_at=utcnow(),
+                terms_accepted_at=utcnow(),
+            )
+            session.add(user)
+            session.flush()
+        elif user.email != invite.email:
+            raise HTTPException(
+                status_code=403,
+                detail="Deze uitnodiging is voor een ander e-mailadres. Log uit en gebruik het juiste account.",
+            )
+        already = session.scalar(
+            select(Membership).where(
+                Membership.user_id == user.id, Membership.company_id == company.id
+            )
+        )
+        if already is None:
+            session.add(Membership(user_id=user.id, company_id=company.id, role=invite.role))
+        invite.accepted_at = utcnow()
+        audit(session, user.id, "team.accept", company.name, client_ip(request))
+        session.commit()
+        start_session(request, user, session)
+        request.session["company_id"] = company.id
+        activate_company(session, request, user, company.id)
+        return user_output(user, session)
+
+    @app.patch("/api/team/{membership_id}")
+    def update_member_role(
+        membership_id: int,
+        payload: MembershipRoleInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        require_perm(user, "team.write")
+        row = session.get(Membership, membership_id)
+        if row is None or row.company_id != tenant_id(user):
+            raise HTTPException(status_code=404, detail="Teamlid niet gevonden")
+        if row.role == "owner":
+            raise HTTPException(status_code=409, detail="De eigenaar van het bedrijf kun je niet wijzigen")
+        if payload.role == "owner":
+            raise HTTPException(status_code=422, detail="Eigenaarschap kun je niet overdragen via deze weg")
+        row.role = payload.role
+        audit(session, user.id, "team.role", f"{row.user_id}:{payload.role}", client_ip(request))
+        session.commit()
+        return {"id": row.id, "role": row.role, "role_label": role_label(row.role)}
+
+    @app.delete("/api/team/{membership_id}", status_code=204)
+    def remove_member(
+        membership_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        row = session.get(Membership, membership_id)
+        if row is None or row.company_id != tenant_id(user):
+            raise HTTPException(status_code=404, detail="Teamlid niet gevonden")
+        if row.user_id == user.id:
+            owners = session.scalars(
+                select(Membership).where(
+                    Membership.company_id == row.company_id, Membership.role == "owner"
+                )
+            ).all()
+            if row.role == "owner" and len(owners) <= 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Je kunt het bedrijf niet verlaten als enige eigenaar. Verwijder het bedrijf of het account.",
+                )
+            session.delete(row)
+            session.commit()
+            return
+        require_perm(user, "team.write")
+        if row.role == "owner":
+            raise HTTPException(status_code=409, detail="De eigenaar kun je niet verwijderen")
+        session.delete(row)
+        audit(session, user.id, "team.remove", str(row.user_id), client_ip(request))
+        session.commit()
+
+    @app.delete("/api/team/invites/{invite_id}", status_code=204)
+    def revoke_invite(
+        invite_id: int,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        require_perm(user, "team.write")
+        invite = session.get(TeamInvite, invite_id)
+        if invite is None or invite.company_id != tenant_id(user):
+            raise HTTPException(status_code=404, detail="Uitnodiging niet gevonden")
+        session.delete(invite)
+        session.commit()
 
     # -- Static pages -----------------------------------------------------
 

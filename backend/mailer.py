@@ -311,3 +311,23 @@ class Mailer:
             html=_html_body(f"Herinnering factuur {invoice_number}", paragraphs, None, signature),
             attachments=[(pdf_filename, "application/pdf", pdf_bytes)],
         )
+
+    def send_team_invite(self, payload) -> bool:
+        invite_link = link(self.settings.public_url, f"uitnodiging.html?token={payload['token']}")
+        paragraphs = [
+            f"Je bent uitgenodigd voor {payload['company_name']} in Kasflow.",
+            f"{payload['inviter']} geeft je de rol {payload['role_label']}.",
+            "De link is 7 dagen geldig. Heb je al een account? Log in met dit e-mailadres en open de link. Zo niet, dan maak je met de knop een account aan.",
+        ]
+        signature = ["Kasflow · " + self.settings.public_url]
+        return self.send(
+            to=payload["email"],
+            subject=f"Uitnodiging voor {payload['company_name']} in Kasflow",
+            text=_text_body(paragraphs, [f"Uitnodiging openen: {invite_link}"] + signature),
+            html=_html_body(
+                "Uitnodiging voor Kasflow",
+                paragraphs,
+                ("Uitnodiging openen", invite_link),
+                signature,
+            ),
+        )

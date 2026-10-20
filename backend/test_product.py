@@ -836,3 +836,69 @@ def test_every_page_uses_the_local_fonts():
     service_worker = (WEB_ROOT / "sw.js").read_text(encoding="utf-8")
     assert "fonts/jakarta-normal-latin.woff2" in service_worker
     assert "fonts/inter-normal-latin.woff2" in service_worker
+
+
+def test_second_company_keeps_books_apart(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    customer = create_customer(client)
+    created = client.post(
+        "/api/companies", json={"name": "Tweede zaak", "kvk_number": "87654321"}
+    )
+    assert created.status_code == 201, created.text
+    me = created.json()
+    assert me["company_name"] == "Tweede zaak"
+    assert client.get("/api/customers").json() == []
+    original = next(item for item in me["companies"] if item["name"] == "Studio Veer")
+    switched = client.post("/api/companies/select", json={"company_id": original["id"]})
+    assert switched.status_code == 200
+    names = [item["name"] for item in client.get("/api/customers").json()]
+    assert customer["name"] in names
+
+
+def test_viewer_cannot_create_invoices(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    invited = client.post(
+        "/api/team/invites", json={"email": "kijker@example.nl", "role": "kijker"}
+    )
+    assert invited.status_code == 201, invited.text
+    token = token_from(client.app.state.mailer, "uitnodiging.html")
+    client.post("/api/auth/logout")
+    accepted = client.post(
+        "/api/team/accept",
+        json={"token": token, "password": "correct-horse-battery-staple"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["role"] == "kijker"
+    customer = client.post(
+        "/api/customers",
+        json={"name": "Niet toegestaan", "street": "Dam 1", "postal_code": "1012 JS", "city": "Amsterdam"},
+    )
+    assert customer.status_code == 403
+
+
+def test_receipt_pdf_is_read_automatically(tmp_path):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas as pdf_canvas
+
+    client = client_for(tmp_path)
+    register(client)
+    buffer = io.BytesIO()
+    page = pdf_canvas.Canvas(buffer, pagesize=A4)
+    page.setFont("Helvetica", 12)
+    page.drawString(72, 750, "Coolblue B.V.")
+    page.drawString(72, 730, "Datum: 15-03-2026")
+    page.drawString(72, 710, "Totaal te betalen EUR 121,00")
+    page.drawString(72, 690, "BTW 21% EUR 21,00")
+    page.save()
+    parsed = client.post(
+        "/api/receipts/parse",
+        files={"file": ("bon.pdf", buffer.getvalue(), "application/pdf")},
+    )
+    assert parsed.status_code == 200, parsed.text
+    payload = parsed.json()
+    assert payload["vendor"] and "Coolblue" in payload["vendor"]
+    assert payload["receipt_date"] == "2026-03-15"
+    assert payload["amount"] == 121.0
+    assert payload["vat_amount"] == 21.0
