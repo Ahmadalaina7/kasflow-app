@@ -505,3 +505,25 @@ def test_legacy_database_is_migrated_without_losing_data(tmp_path):
     ]
     assert index_columns == ["owner_id", "number"]
     connection.close()
+
+
+def test_login_provisions_company_when_membership_is_missing(tmp_path):
+    database = tmp_path / "test.sqlite3"
+    client = TestClient(create_app(f"sqlite:///{database.as_posix()}"))
+    register(client)
+    assert client.post("/api/auth/logout").status_code == 204
+
+    connection = sqlite3.connect(database)
+    connection.execute("DELETE FROM memberships")
+    connection.commit()
+    connection.close()
+
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "sanne@example.nl", "password": "correct-horse-battery-staple"},
+    )
+    assert login.status_code == 200, login.text
+    assert login.json()["company_id"]
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["company_id"] == login.json()["company_id"]

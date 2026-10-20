@@ -1309,6 +1309,14 @@ def create_app(
     def activate_company(session: Session, request: Request, user: User, company_id: int | None) -> Company:
         rows = memberships_for(session, user)
         if not rows:
+            company = company_from_user(user)
+            session.add(company)
+            session.flush()
+            session.add(Membership(user_id=user.id, company_id=company.id, role="owner"))
+            session.commit()
+            session.refresh(user)
+            rows = memberships_for(session, user)
+        if not rows:
             raise HTTPException(
                 status_code=409,
                 detail="Dit account heeft geen bedrijf. Log uit en weer in, of maak een bedrijf aan onder Instellingen.",

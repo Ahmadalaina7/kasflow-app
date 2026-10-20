@@ -555,11 +555,23 @@ dialog.modal::backdrop{ background:rgba(10,24,48,0.55); backdrop-filter:blur(3px
 .account-row .row-sub{ margin-top:3px; }
 
 /* ---------- Auth ---------- */
-.auth-shell{ min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+body:has(.auth-shell){
+  background:#fff;
+  min-height:100vh;
+  min-height:100dvh;
+}
+.auth-shell{
+  min-height:100vh; min-height:100dvh;
+  height:100vh; height:100dvh;
+  display:grid;
+  grid-template-columns:minmax(0,1.05fr) minmax(min(100%, 400px), 0.95fr);
+  grid-template-rows:minmax(0,1fr);
+  overflow:hidden;
+}
 .auth-visual{
   background:radial-gradient(120% 100% at 15% 0%, #123058 0%, var(--navy-950) 55%, #060F20 100%);
   padding:48px 56px 40px; display:flex; flex-direction:column; justify-content:space-between;
-  color:#fff; position:relative; overflow:hidden;
+  color:#fff; position:relative; overflow:hidden; min-height:0;
 }
 .auth-visual::before{
   content:""; position:absolute; inset:0;
@@ -578,7 +590,7 @@ dialog.modal::backdrop{ background:rgba(10,24,48,0.55); backdrop-filter:blur(3px
   font-family:var(--display); font-size:1.15rem; font-weight:600;
   display:inline-flex; align-items:center; gap:10px; color:#fff; width:fit-content;
 }
-.auth-visual-body{ position:relative; z-index:1; max-width:440px; }
+.auth-visual-body{ position:relative; z-index:1; max-width:440px; flex:1 1 auto; min-height:0; }
 .auth-kicker{
   display:inline-flex; align-items:center; gap:8px;
   font-size:0.72rem; font-weight:600; letter-spacing:0.14em; text-transform:uppercase;
@@ -615,8 +627,12 @@ dialog.modal::backdrop{ background:rgba(10,24,48,0.55); backdrop-filter:blur(3px
   font-family:var(--numeric); font-size:0.75rem; color:rgba(255,255,255,0.5);
   padding-top:22px; border-top:1px solid rgba(255,255,255,0.08);
 }
-.auth-form-wrap{ display:flex; align-items:center; justify-content:center; padding:44px 28px; }
-.auth-form{ width:100%; max-width:392px; }
+.auth-form-wrap{
+  display:flex; justify-content:center;
+  padding:48px 40px; min-height:0; overflow-y:auto;
+  background:#FAFBFC;
+}
+.auth-form{ width:100%; max-width:400px; margin-block:auto; }
 .auth-brand{ display:none; align-items:center; gap:10px; font-family:var(--display); font-weight:600; font-size:1.15rem; margin-bottom:30px; color:var(--navy-900); }
 .auth-form h1,.auth-form h2{
   font-family:var(--display); font-weight:700; font-size:1.85rem;
@@ -624,6 +640,7 @@ dialog.modal::backdrop{ background:rgba(10,24,48,0.55); backdrop-filter:blur(3px
   color:var(--navy-900); margin-bottom:8px;
 }
 .auth-form p.sub{ color:var(--ink-500); font-size:0.92rem; line-height:1.6; margin-bottom:28px; }
+.auth-form .field-control{ background:#fff; }
 .auth-submit{
   width:100%; min-height:48px; padding:13px; border-radius:999px;
   background:linear-gradient(135deg, var(--emerald-400), var(--emerald-600));
@@ -650,7 +667,7 @@ dialog.modal::backdrop{ background:rgba(10,24,48,0.55); backdrop-filter:blur(3px
 .step-pane.active{ display:block; }
 .auth-step-actions{ display:flex; gap:10px; margin-top:24px; }
 .auth-step-actions .btn{ flex:1; }
-.auth-foot{ margin-top:34px; font-size:0.78rem; color:var(--ink-500); text-align:center; }
+.auth-foot{ margin-top:34px; font-size:0.78rem; line-height:1.55; color:var(--ink-500); text-align:center; }
 
 /* ---------- Mobile shell ---------- */
 .mobile-bar,.mobile-tabs,.more-sheet,.sheet-backdrop{ display:none; }
@@ -735,6 +752,14 @@ dialog.modal::backdrop{ background:rgba(10,24,48,0.55); backdrop-filter:blur(3px
 body.sheet-open{ overflow:hidden; }
 
 /* ---------- Responsive ---------- */
+@media (max-height: 760px){
+  .auth-visual{ padding:36px 40px 28px; }
+  .auth-kicker{ margin-bottom:14px; }
+  .auth-quote{ font-size:1.4rem; }
+  .auth-points{ margin-top:18px; gap:8px; }
+  .auth-form-wrap{ padding-top:32px; padding-bottom:32px; }
+}
+
 @media (max-width: 1180px){
   .main{ padding:30px 28px 56px; }
   .stat-grid{ grid-template-columns:repeat(2, minmax(0,1fr)); }
@@ -757,12 +782,9 @@ body.sheet-open{ overflow:hidden; }
   .form-grid,.upload-panel,.settings-grid{ grid-template-columns:1fr; }
   .settings-card.wide{ grid-column:auto; }
   .metric-grid{ grid-template-columns:repeat(2, minmax(0,1fr)); }
-  .auth-shell{ grid-template-columns:1fr; }
-  .auth-visual{ display:none; }
-  .auth-form-wrap{ padding:44px 24px; align-items:flex-start; }
-  .auth-brand{ display:flex; }
-  .auth-form{ max-width:420px; margin:0 auto; }
-  .auth-form-wrap{ min-height:100vh; align-items:center; }
+  .auth-shell{ grid-template-columns:minmax(0,1fr) minmax(min(100%, 360px), 0.9fr); }
+  .auth-visual{ padding:36px 32px 28px; }
+  .auth-form-wrap{ padding:36px 28px; }
 }
 
 @media (max-width: 760px){
@@ -835,6 +857,19 @@ body.sheet-open{ overflow:hidden; }
   .modal{ width:calc(100vw - 20px); }
   .modal-head,.modal-body{ padding-left:20px; padding-right:20px; }
   .modal-foot{ padding-left:20px; padding-right:20px; padding-bottom:20px; }
+
+  .auth-shell{
+    grid-template-columns:1fr;
+    height:auto; overflow:visible;
+    grid-template-rows:auto;
+  }
+  .auth-visual{ display:none; }
+  .auth-brand{ display:flex; margin-bottom:24px; }
+  .auth-form-wrap{
+    padding:36px 24px; min-height:100vh; min-height:100dvh;
+    background:var(--gray-50);
+  }
+  .auth-form{ max-width:420px; margin:0 auto; }
 }
 
 @media (max-width: 600px){
@@ -872,7 +907,6 @@ body.sheet-open{ overflow:hidden; }
   .modal-foot{ padding-bottom:calc(20px + var(--safe-bottom)); }
   .auth-form-wrap{ padding:32px 20px; }
   .auth-form h1,.auth-form h2{ font-size:1.6rem; }
-  .auth-brand{ margin-bottom:24px; }
   .progress-pill{ font-size:0.76rem; padding:7px 11px; }
   .account-row{ align-items:flex-start; }
   .alert{ padding:14px; }
@@ -897,8 +931,12 @@ body.sheet-open{ overflow:hidden; }
 .modal-foot{ flex-wrap:wrap; gap:10px; }
 .modal-foot .btn{ flex:0 0 auto; }
 
-.auth-shell.single{ grid-template-columns:1fr; }
-.auth-shell.single .auth-form-wrap{ min-height:100vh; }
+.auth-shell.single{
+  grid-template-columns:1fr;
+  height:auto; overflow:visible;
+  grid-template-rows:auto;
+}
+.auth-shell.single .auth-form-wrap{ min-height:100vh; min-height:100dvh; }
 .field-hint a{ color:var(--emerald-600); font-weight:600; }
 .field-control:disabled{ background:#F2F4F7; color:var(--ink-500); cursor:not-allowed; }
 textarea.field-control{ min-height:88px; resize:vertical; line-height:1.55; }
