@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Kasflow — Registreren</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body>
+
+<div class="auth-shell">
+  <div class="auth-visual">
+    <a class="logo" href="index.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <div class="auth-quote">
+      Registreer jouw bedrijf in drie stappen en start direct met facturen, btw-overzicht en bonnetjes.
+      <div class="auth-quote-author">Voor zzp'ers en kleine teams</div>
+    </div>
+    <div style="font-family:var(--numeric); font-size:0.78rem; color:rgba(255,255,255,0.4);">&copy; 2026 Kasflow B.V.</div>
+  </div>
+
+  <div class="auth-form-wrap">
+    <form class="auth-form" id="signup-form" novalidate>
+      <a class="auth-brand" href="index.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+      <h1>Maak je account aan</h1>
+      <p class="sub" id="signup-sub">Stap 1 van 3 — bedrijfsgegevens.</p>
+
+      <div class="progress-row">
+        <span class="progress-pill active" data-step="1">Bedrijfsgegevens</span>
+        <span class="progress-pill" data-step="2">Account</span>
+        <span class="progress-pill" data-step="3">Afronden</span>
+      </div>
+
+      <div class="step-pane active" id="step-1">
+        <div class="field-group">
+          <label class="field-label" for="company-name">Bedrijfsnaam</label>
+          <input id="company-name" class="field-control" type="text" placeholder="Studio Veer" maxlength="200" required>
+        </div>
+        <div class="field-row">
+          <div>
+            <label class="field-label" for="kvk">KVK-nummer</label>
+            <input id="kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" placeholder="12345678" required>
+            <div class="field-hint">8 cijfers, zonder punten.</div>
+          </div>
+          <div>
+            <label class="field-label" for="vat">BTW-nummer (optioneel)</label>
+            <input id="vat" class="field-control" type="text" maxlength="20" placeholder="NL123456789B01">
+          </div>
+        </div>
+      </div>
+
+      <div class="step-pane" id="step-2">
+        <div class="field-group">
+          <label class="field-label" for="email">E-mailadres</label>
+          <input id="email" class="field-control" type="email" placeholder="jij@bedrijf.nl" autocomplete="username" maxlength="320" required>
+        </div>
+        <div class="field-group" style="margin-top:18px">
+          <label class="field-label" for="password">Wachtwoord</label>
+          <input id="password" class="field-control" type="password" minlength="12" maxlength="1024" placeholder="Minimaal 12 tekens" autocomplete="new-password" required>
+          <div class="field-hint">Minimaal 12 tekens. Gebruik iets dat je nergens anders gebruikt.</div>
+        </div>
+        <div class="field-group" style="margin-top:18px">
+          <label class="field-label" for="password-repeat">Wachtwoord herhalen</label>
+          <input id="password-repeat" class="field-control" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+        </div>
+      </div>
+
+      <div class="step-pane" id="step-3">
+        <div class="alert">
+          <div><strong>Klaar om te starten.</strong> Je account wordt direct aangemaakt. Een bankkoppeling stel je later in;
+          deel hier nooit je bankwachtwoord.</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-row"><span>Bedrijf</span><strong id="review-company">—</strong></div>
+          <div class="summary-row"><span>KVK-nummer</span><strong id="review-kvk">—</strong></div>
+          <div class="summary-row"><span>E-mailadres</span><strong id="review-email">—</strong></div>
+        </div>
+        <label class="consent-row">
+          <input type="checkbox" id="accept-terms" required>
+          <span>Ik ga akkoord met de <a href="voorwaarden.html" target="_blank" rel="noopener">algemene voorwaarden</a> en de <a href="privacy.html" target="_blank" rel="noopener">privacyverklaring</a>, en ik heb de <a href="verwerkersovereenkomst.html" target="_blank" rel="noopener">verwerkersovereenkomst</a> gelezen.</span>
+        </label>
+      </div>
+
+      <div class="auth-step-actions">
+        <button type="button" class="btn btn-outline" id="prev-step" disabled>Terug</button>
+        <button type="button" class="btn btn-primary" id="next-step">Volgende</button>
+      </div>
+
+      <p class="auth-note" id="signup-feedback" role="status" aria-live="polite"></p>
+      <p class="auth-alt">Heb je al een account? <a href="login.html">Log in</a></p>
+    </form>
+
+    <div class="auth-form" id="signup-done" hidden>
+      <a class="auth-brand" href="index.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+      <h1>Check je inbox</h1>
+      <p class="sub">Je account is aangemaakt. We hebben een bevestigingslink gestuurd naar <strong id="done-email">je e-mailadres</strong>.</p>
+      <div class="alert">
+        <div><strong>Bijna klaar.</strong> Klik op de link in de e-mail om je adres te bevestigen. Daarna kun je inloggen en facturen versturen. De link is 48 uur geldig.</div>
+      </div>
+      <div class="form-actions">
+        <a class="btn btn-primary" href="login.html">Naar inloggen</a>
+      </div>
+      <p class="auth-foot">Geen e-mail ontvangen? Kijk in je spamfolder. Je kunt na het inloggen een nieuwe link aanvragen bij Instellingen.</p>
+    </div>
+  </div>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const form = document.getElementById('signup-form');
+  const steps = [...document.querySelectorAll('.step-pane')];
+  const pills = [...document.querySelectorAll('.progress-pill')];
+  const prevButton = document.getElementById('prev-step');
+  const nextButton = document.getElementById('next-step');
+  const feedback = document.getElementById('signup-feedback');
+  const subtitles = ['Stap 1 van 3 — bedrijfsgegevens.', 'Stap 2 van 3 — je account.', 'Stap 3 van 3 — controleren en starten.'];
+  let activeIndex = 0;
+
+  fetch('/api/auth/me', { headers: { Accept: 'application/json' } })
+    .then(response => {
+      if (response.ok) window.location.replace('dashboard.html');
+    })
+    .catch(() => {});
+
+  function updateStep() {
+    steps.forEach((step, index) => step.classList.toggle('active', index === activeIndex));
+    pills.forEach((pill, index) => pill.classList.toggle('active', index === activeIndex));
+    prevButton.disabled = activeIndex === 0;
+    nextButton.textContent = activeIndex === steps.length - 1 ? 'Account aanmaken' : 'Volgende';
+    nextButton.type = activeIndex === steps.length - 1 ? 'submit' : 'button';
+    document.getElementById('signup-sub').textContent = subtitles[activeIndex];
+    if (activeIndex === 2) {
+      document.getElementById('review-company').textContent = document.getElementById('company-name').value.trim() || '—';
+      document.getElementById('review-kvk').textContent = document.getElementById('kvk').value.trim() || '—';
+      document.getElementById('review-email').textContent = document.getElementById('email').value.trim() || '—';
+    }
+  }
+
+  function firstInvalidInStep(index) {
+    return steps[index].querySelector(':invalid');
+  }
+
+  nextButton.addEventListener('click', () => {
+    if (activeIndex === steps.length - 1) return;
+    const invalid = firstInvalidInStep(activeIndex);
+    if (invalid) {
+      invalid.reportValidity();
+      invalid.focus();
+      return;
+    }
+    activeIndex += 1;
+    updateStep();
+  });
+
+  prevButton.addEventListener('click', () => {
+    if (activeIndex > 0) {
+      activeIndex -= 1;
+      updateStep();
+    }
+  });
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    Kasflow.note(feedback, '');
+
+    for (let index = 0; index < steps.length; index += 1) {
+      const invalid = firstInvalidInStep(index);
+      if (invalid) {
+        activeIndex = index;
+        updateStep();
+        invalid.reportValidity();
+        invalid.focus();
+        return;
+      }
+    }
+
+    const password = document.getElementById('password').value;
+    const repeat = document.getElementById('password-repeat').value;
+    if (password !== repeat) {
+      activeIndex = 1;
+      updateStep();
+      Kasflow.note(feedback, 'De twee wachtwoorden zijn niet gelijk.', 'error');
+      document.getElementById('password-repeat').focus();
+      return;
+    }
+
+    const payload = {
+      company_name: document.getElementById('company-name').value.trim(),
+      kvk_number: document.getElementById('kvk').value.trim(),
+      vat_number: document.getElementById('vat').value.trim() || null,
+      email: document.getElementById('email').value.trim(),
+      password,
+      terms: document.getElementById('accept-terms').checked
+    };
+
+    Kasflow.setBusy(nextButton, true, 'Account aanmaken…');
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = result && result.detail;
+        const message = Array.isArray(detail) && detail.length
+          ? detail[0].msg || 'Controleer je gegevens.'
+          : (detail || 'Account aanmaken is niet gelukt.');
+        throw new Error(message);
+      }
+      if (result && result.verification_required) {
+        document.getElementById('done-email').textContent = result.email;
+        form.hidden = true;
+        document.getElementById('signup-done').hidden = false;
+        return;
+      }
+      window.location.href = 'dashboard.html';
+    } catch (error) {
+      Kasflow.note(feedback, error.message, 'error');
+      Kasflow.setBusy(nextButton, false);
+    }
+  });
+
+  updateStep();
+})();
+</script>
+
+</body>
+</html>

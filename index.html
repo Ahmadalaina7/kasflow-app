@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kasflow — Boekhouding die meetelt</title>
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<style>
+  :root{
+    --navy-950:#0A1830;
+    --navy-900:#0F2244;
+    --navy-700:#1D3A66;
+    --emerald-600:#0E9F6E;
+    --emerald-400:#34D399;
+    --gold-500:#C9A24B;
+    --gray-50:#F6F7F9;
+    --ink-700:#33415C;
+    --ink-500:#64748B;
+    --white:#FFFFFF;
+    --display: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --numeric: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --radius: 22px;
+    --shadow-soft: 0 30px 60px -25px rgba(10,24,48,0.25);
+    --shadow-card: 0 20px 40px -20px rgba(15,34,68,0.18);
+  }
+
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family: var(--sans);
+    color: var(--ink-700);
+    background: var(--gray-50);
+    -webkit-font-smoothing: antialiased;
+    overflow-x:hidden;
+    font-variant-numeric: tabular-nums;
+  }
+  img,svg{display:block; max-width:100%;}
+  a{color:inherit; text-decoration:none;}
+  ul{list-style:none;}
+  button{font-family:inherit; cursor:pointer; border:none;}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important; scroll-behavior:auto !important;}
+  }
+
+  :focus-visible{
+    outline: 2px solid var(--emerald-400);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  .container{
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+
+  em{font-style:italic; color:var(--emerald-400);}
+
+  /* ---------- NAV ---------- */
+  .nav{
+    position: fixed;
+    top:0; left:0; right:0;
+    z-index: 100;
+    padding: 22px 0;
+    transition: background .35s ease, padding .35s ease, box-shadow .35s ease;
+  }
+  .nav.scrolled{
+    background: rgba(10,24,48,0.88);
+    backdrop-filter: blur(14px);
+    padding: 14px 0;
+    box-shadow: 0 10px 30px -15px rgba(0,0,0,0.4);
+  }
+  .nav.open .nav-links{
+    display:flex;
+    flex-direction:column;
+    position:absolute;
+    top:64px;
+    left:0;
+    right:0;
+    background: rgba(10,24,48,0.98);
+    padding: 22px 20px 20px;
+    gap: 18px;
+    box-shadow: 0 30px 90px -50px rgba(0,0,0,0.35);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .nav.open .nav-links a{
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.06);
+    color: var(--white);
+  }
+  .nav-inner{
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .logo{
+    display:flex; align-items:center; gap:10px;
+    font-family: var(--display);
+    font-weight:700;
+    font-size: 1.35rem;
+    color: var(--white);
+    letter-spacing: -0.02em;
+  }
+  .logo-mark{
+    width: 30px; height:30px; border-radius:9px;
+    background: linear-gradient(135deg, var(--emerald-400), var(--emerald-600));
+    position:relative;
+    box-shadow: 0 0 22px rgba(52,211,153,0.55);
+  }
+  .logo-mark::after{
+    content:"";
+    position:absolute; inset:8px;
+    border-radius:3px;
+    background: var(--navy-950);
+    clip-path: polygon(0 100%, 30% 55%, 55% 75%, 100% 0, 100% 100%);
+  }
+  .nav-links{
+    display:flex; align-items:center; gap:36px;
+  }
+  .nav-links a{
+    color: rgba(255,255,255,0.72);
+    font-size: 0.94rem;
+    font-weight:500;
+    transition: color .2s ease;
+  }
+  .nav-links a:hover{ color: var(--white); }
+  .nav-cta{
+    display:flex; align-items:center; gap:18px;
+  }
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    padding: 13px 26px;
+    border-radius: 999px;
+    font-weight:600;
+    font-size: 0.94rem;
+    transition: transform .25s cubic-bezier(.2,.8,.2,1), box-shadow .25s ease, background .25s ease;
+    white-space:nowrap;
+  }
+  .btn-primary{
+    background: linear-gradient(135deg, var(--emerald-400), var(--emerald-600));
+    color: var(--navy-950);
+    box-shadow: 0 14px 30px -10px rgba(14,159,110,0.55);
+  }
+  .btn-primary:hover{ transform: translateY(-2px); box-shadow: 0 18px 38px -10px rgba(14,159,110,0.7); }
+  .btn-ghost-light{
+    color: rgba(255,255,255,0.85);
+    font-size:0.94rem; font-weight:500;
+  }
+  .btn-ghost-light:hover{ color:var(--white); }
+  .nav-toggle{
+    display:none;
+    width:40px; height:40px;
+    background:transparent;
+    align-items:center; justify-content:center;
+    position:relative;
+  }
+  .nav-toggle span,
+  .nav-toggle::before,
+  .nav-toggle::after{
+    content:"";
+    display:block;
+    width:20px;
+    height:2px;
+    background:var(--white);
+    border-radius:2px;
+    transition: transform .25s ease, opacity .25s ease;
+  }
+  .nav-toggle::before{ transform: translateY(-6px); }
+  .nav-toggle::after{ transform: translateY(6px); }
+  .nav-toggle{ flex-direction:column; gap:5px; }
+  .nav.open .nav-toggle span{ opacity:0; }
+  .nav.open .nav-toggle::before{ transform: rotate(45deg); }
+  .nav.open .nav-toggle::after{ transform: rotate(-45deg); }
+  .nav.open .nav-links{
+    display:flex;
+    flex-direction:column;
+    position:absolute;
+    top:64px;
+    left:0;
+    right:0;
+    background: rgba(10,24,48,0.98);
+    padding: 22px 20px 20px;
+    gap: 18px;
+    box-shadow: 0 30px 90px -50px rgba(0,0,0,0.35);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .nav.open .nav-links a{
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.06);
+    color: var(--white);
+  }
+
+  /* ---------- HERO ---------- */
+  .hero{
+    position:relative;
+    background: radial-gradient(120% 100% at 18% 0%, #123058 0%, var(--navy-950) 55%, #060F20 100%);
+    padding: 168px 0 120px;
+    overflow:hidden;
+  }
+  .hero::before{
+    content:"";
+    position:absolute; inset:0;
+    background-image:
+      radial-gradient(600px 300px at 85% 10%, rgba(52,211,153,0.16), transparent 60%),
+      radial-gradient(800px 400px at 0% 100%, rgba(29,58,102,0.5), transparent 60%);
+    pointer-events:none;
+  }
+  .hero-grid{
+    position:relative;
+    display:grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 64px;
+    align-items:center;
+  }
+  .eyebrow{
+    display:inline-flex; align-items:center; gap:10px;
+    font-family: var(--numeric);
+    font-size: 0.76rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--emerald-400);
+    background: rgba(52,211,153,0.1);
+    border: 1px solid rgba(52,211,153,0.28);
+    padding: 8px 16px;
+    border-radius: 999px;
+    margin-bottom: 28px;
+  }
+  .eyebrow .dot{
+    width:6px; height:6px; border-radius:50%;
+    background: var(--emerald-400);
+    box-shadow: 0 0 10px var(--emerald-400);
+    animation: pulse 2.2s infinite;
+  }
+  @keyframes pulse{
+    0%,100%{ opacity:1; transform:scale(1); }
+    50%{ opacity:0.4; transform:scale(0.7); }
+  }
+  .hero h1{
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: clamp(2.6rem, 4.4vw, 3.9rem);
+    line-height: 1.06;
+    letter-spacing: -0.035em;
+    color: var(--white);
+    margin-bottom: 26px;
+  }
+  .hero p.lede{
+    font-size: 1.13rem;
+    line-height: 1.65;
+    color: rgba(255,255,255,0.68);
+    max-width: 480px;
+    margin-bottom: 38px;
+  }
+  .hero-actions{
+    display:flex; align-items:center; gap:28px;
+    margin-bottom: 56px;
+  }
+  .hero-proof{
+    display:flex; gap:34px;
+    flex-wrap:wrap;
+  }
+  .proof-item{
+    font-family: var(--numeric);
+  }
+  .proof-num{
+    font-size: 1.5rem;
+    font-weight:600;
+    color: var(--white);
+    display:block;
+  }
+  .proof-label{
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    color: rgba(255,255,255,0.5);
+  }
+
+  /* dashboard mockup */
+  .mockup{
+    position:relative;
+    background: linear-gradient(165deg, rgba(29,58,102,0.55), rgba(10,24,48,0.85));
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 26px;
+    padding: 26px;
+    box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255,255,255,0.06);
+    backdrop-filter: blur(6px);
+  }
+  .mockup-glow{
+    position:absolute; width:280px; height:280px;
+    background: radial-gradient(circle, rgba(52,211,153,0.35), transparent 70%);
+    top:-60px; right:-60px;
+    filter: blur(10px);
+    pointer-events:none;
+  }
+  .mockup-head{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom: 20px;
+  }
+  .mockup-title{
+    color: rgba(255,255,255,0.9);
+    font-size:0.86rem; font-weight:600;
+  }
+  .mockup-badge{
+    font-family:var(--numeric);
+    font-size:0.68rem;
+    color:var(--emerald-400);
+    background:rgba(52,211,153,0.12);
+    padding:5px 10px;
+    border-radius:999px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .mockup-badge .dot{width:5px;height:5px;border-radius:50%;background:var(--emerald-400);box-shadow:0 0 8px var(--emerald-400);}
+  .mockup-cards{
+    display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:16px;
+  }
+  .mockup-card{
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 16px;
+    padding: 16px 18px;
+  }
+  .mockup-card.wide{ grid-column: 1 / -1; }
+  .mc-label{
+    font-size:0.72rem;
+    color: rgba(255,255,255,0.48);
+    margin-bottom:8px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .mc-value{
+    font-family: var(--numeric);
+    font-size: 1.5rem;
+    font-weight:600;
+    color: var(--white);
+    letter-spacing:-0.01em;
+  }
+  .mc-delta{
+    font-family:var(--numeric);
+    font-size:0.72rem;
+    color: var(--emerald-400);
+  }
+  .sparkline{
+    width:100%; height:38px; margin-top:10px;
+  }
+  .mockup-footer-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding-top:14px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+  }
+  .mini-progress{
+    flex:1; height:6px; border-radius:99px;
+    background: rgba(255,255,255,0.08);
+    overflow:hidden;
+    margin: 0 14px;
+  }
+  .mini-progress-fill{
+    height:100%; border-radius:99px;
+    background: linear-gradient(90deg, var(--emerald-600), var(--emerald-400));
+    width: 72%;
+  }
+
+  /* ---------- LOGO STRIP ---------- */
+  .logo-strip{
+    background: var(--white);
+    padding: 44px 0;
+    border-bottom: 1px solid #EBEDF2;
+  }
+  .logo-strip-inner{
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:28px;
+  }
+  .logo-strip-label{
+    font-size:0.8rem; color: var(--ink-500); white-space:nowrap;
+  }
+  .logo-row{ display:flex; gap:38px; flex-wrap:wrap; align-items:center; }
+  .fake-logo{
+    font-family: var(--display); font-weight:500; font-size:1.1rem;
+    color: var(--ink-500); opacity:0.55; letter-spacing:-0.01em;
+  }
+
+  /* ---------- SECTION SHARED ---------- */
+  section{ padding: 116px 0; }
+  .section-head{
+    max-width: 640px; margin-bottom: 64px;
+  }
+  .section-eyebrow{
+    font-family: var(--numeric);
+    font-size: 0.76rem;
+    letter-spacing:0.08em;
+    text-transform: uppercase;
+    color: var(--emerald-600);
+    margin-bottom: 16px;
+    display:block;
+  }
+  .section-head h2{
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(1.9rem, 3vw, 2.6rem);
+    color: var(--navy-900);
+    line-height:1.15;
+    letter-spacing:-0.03em;
+    margin-bottom:18px;
+  }
+  .section-head p{
+    font-size: 1.03rem;
+    color: var(--ink-500);
+    line-height:1.6;
+  }
+
+  /* ---------- FEATURES ---------- */
+  .features{ background: var(--gray-50); }
+  .feature-grid{
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 26px;
+  }
+  .feature-card{
+    background: var(--white);
+    border-radius: var(--radius);
+    padding: 34px 30px;
+    box-shadow: var(--shadow-card);
+    border: 1px solid #EEF0F4;
+    transition: transform .3s ease, box-shadow .3s ease;
+  }
+  .feature-card:hover{
+    transform: translateY(-6px);
+    box-shadow: 0 30px 50px -22px rgba(15,34,68,0.24);
+  }
+  .feature-icon{
+    width:46px; height:46px; border-radius:13px;
+    background: linear-gradient(135deg, rgba(14,159,110,0.12), rgba(52,211,153,0.06));
+    display:flex; align-items:center; justify-content:center;
+    margin-bottom:22px;
+  }
+  .feature-card h3{
+    font-family: var(--display);
+    font-weight:700;
+    font-size:1.2rem;
+    color: var(--navy-900);
+    margin-bottom:10px;
+    letter-spacing:-0.005em;
+  }
+  .feature-card p{
+    font-size:0.94rem;
+    color: var(--ink-500);
+    line-height:1.6;
+  }
+  .feature-card.spot{
+    background: linear-gradient(160deg, var(--navy-900), var(--navy-950));
+    border:none;
+  }
+  .feature-card.spot h3{ color: var(--white); }
+  .feature-card.spot p{ color: rgba(255,255,255,0.6); }
+  .feature-card.spot .feature-icon{
+    background: rgba(52,211,153,0.14);
+  }
+
+  /* ---------- CALCULATOR (dark anchor) ---------- */
+  .calc-section{
+    background: radial-gradient(120% 100% at 82% 100%, #123058 0%, var(--navy-950) 55%, #060F20 100%);
+    position:relative;
+    overflow:hidden;
+  }
+  .calc-section::before{
+    content:"";
+    position:absolute; inset:0;
+    background-image: radial-gradient(700px 350px at 10% 0%, rgba(52,211,153,0.12), transparent 60%);
+    pointer-events:none;
+  }
+  .calc-section .section-head h2{ color: var(--white); }
+  .calc-section .section-head p{ color: rgba(255,255,255,0.6); }
+  .calc-section .section-eyebrow{ color: var(--emerald-400); }
+
+  .calc-grid{
+    position:relative;
+    display:grid;
+    grid-template-columns: 0.95fr 1.05fr;
+    gap: 54px;
+    align-items:stretch;
+  }
+  .calc-controls{
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: var(--radius);
+    padding: 34px;
+  }
+  .calc-field{ margin-bottom: 30px; }
+  .calc-field:last-child{ margin-bottom:0; }
+  .calc-field label{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-size:0.86rem; color: rgba(255,255,255,0.62); margin-bottom:14px;
+  }
+  .calc-field label .val{
+    font-family: var(--numeric);
+    color: var(--emerald-400);
+    font-size:1rem;
+    font-weight:600;
+  }
+  input[type=range]{
+    width:100%; -webkit-appearance:none; appearance:none;
+    height:6px; border-radius:99px;
+    background: rgba(255,255,255,0.1);
+    outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none;
+    width:20px; height:20px; border-radius:50%;
+    background: var(--emerald-400);
+    box-shadow: 0 0 0 5px rgba(52,211,153,0.18), 0 4px 12px rgba(0,0,0,0.4);
+    cursor:pointer;
+    border: 2px solid var(--navy-950);
+  }
+  input[type=range]::-moz-range-thumb{
+    width:20px; height:20px; border-radius:50%;
+    background: var(--emerald-400);
+    box-shadow: 0 0 0 5px rgba(52,211,153,0.18);
+    cursor:pointer; border: 2px solid var(--navy-950);
+  }
+  .segmented{
+    display:flex; gap:8px; margin-top:14px;
+  }
+  .segmented button{
+    flex:1;
+    padding: 10px 8px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.6);
+    font-size:0.84rem; font-weight:500;
+    transition: all .2s ease;
+  }
+  .segmented button.active{
+    background: rgba(52,211,153,0.14);
+    border-color: rgba(52,211,153,0.4);
+    color: var(--emerald-400);
+  }
+
+  .calc-output{
+    background: linear-gradient(165deg, rgba(29,58,102,0.55), rgba(10,24,48,0.9));
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: var(--radius);
+    padding: 34px;
+    display:flex; flex-direction:column;
+    box-shadow: var(--shadow-soft);
+  }
+  .calc-output-label{
+    font-size:0.82rem; color: rgba(255,255,255,0.5); margin-bottom:8px;
+  }
+  .calc-output-value{
+    font-family: var(--numeric);
+    font-size: 3.1rem;
+    font-weight:600;
+    color: var(--white);
+    letter-spacing:-0.02em;
+    line-height:1;
+    margin-bottom: 6px;
+  }
+  .calc-output-sub{
+    font-size:0.86rem; color: var(--emerald-400);
+    font-family: var(--numeric);
+    margin-bottom: 28px;
+  }
+  .calc-breakdown{
+    display:flex; flex-direction:column; gap:14px;
+    margin-top:auto;
+    padding-top: 24px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .breakdown-row{
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:0.88rem;
+  }
+  .breakdown-row .b-label{ color: rgba(255,255,255,0.58); }
+  .breakdown-row .b-val{ font-family: var(--numeric); color: rgba(255,255,255,0.88); }
+
+  /* ---------- PRICING ---------- */
+  .pricing{ background: var(--gray-50); }
+  .pricing-grid{
+    display:grid; grid-template-columns: repeat(3, 1fr); gap: 26px;
+    align-items:stretch;
+  }
+  .price-card{
+    background: var(--white);
+    border-radius: var(--radius);
+    padding: 38px 32px;
+    border: 1px solid #EEF0F4;
+    box-shadow: var(--shadow-card);
+    display:flex; flex-direction:column;
+    position:relative;
+  }
+  .price-card.featured{
+    background: linear-gradient(170deg, var(--navy-900), var(--navy-950));
+    border: 1px solid rgba(201,162,75,0.35);
+    box-shadow: 0 30px 60px -20px rgba(10,24,48,0.45);
+    transform: scale(1.035);
+  }
+  .price-badge{
+    position:absolute; top:-14px; left:50%; transform:translateX(-50%);
+    background: linear-gradient(135deg, var(--gold-500), #E4C57A);
+    color: var(--navy-950);
+    font-family: var(--numeric);
+    font-size:0.68rem; font-weight:600; letter-spacing:0.04em;
+    text-transform:uppercase;
+    padding: 7px 16px;
+    border-radius: 999px;
+    box-shadow: 0 8px 20px -6px rgba(201,162,75,0.6);
+  }
+  .price-name{
+    font-family: var(--display); font-weight:600; font-size:1.3rem;
+    color: var(--navy-900); margin-bottom:6px;
+  }
+  .price-card.featured .price-name{ color: var(--white); }
+  .price-tagline{
+    font-size:0.88rem; color: var(--ink-500); margin-bottom:26px;
+  }
+  .price-card.featured .price-tagline{ color: rgba(255,255,255,0.6); }
+  .price-amount{
+    display:flex; align-items:baseline; gap:6px; margin-bottom:28px;
+  }
+  .price-amount .num{
+    font-family: var(--numeric); font-size:2.5rem; font-weight:600;
+    color: var(--navy-900);
+  }
+  .price-card.featured .price-amount .num{ color: var(--white); }
+  .price-amount .per{ font-size:0.86rem; color: var(--ink-500); }
+  .price-card.featured .price-amount .per{ color: rgba(255,255,255,0.5); }
+  .price-list{
+    display:flex; flex-direction:column; gap:14px;
+    margin-bottom: 32px; flex:1;
+  }
+  .price-list li{
+    display:flex; align-items:flex-start; gap:10px;
+    font-size:0.9rem; color: var(--ink-700);
+  }
+  .price-card.featured .price-list li{ color: rgba(255,255,255,0.82); }
+  .check{
+    flex-shrink:0; width:18px; height:18px; margin-top:2px;
+    color: var(--emerald-600);
+  }
+  .price-card.featured .check{ color: var(--emerald-400); }
+  .price-cta{
+    width:100%; text-align:center;
+    padding: 13px 20px; border-radius:999px;
+    font-weight:600; font-size:0.92rem;
+    background: var(--gray-50);
+    color: var(--navy-900);
+    border: 1px solid #E4E7EC;
+    transition: all .2s ease;
+  }
+  .price-cta:hover{ background:#ECEEF2; }
+  .price-card.featured .price-cta{
+    background: linear-gradient(135deg, var(--emerald-400), var(--emerald-600));
+    color: var(--navy-950);
+    border:none;
+    box-shadow: 0 14px 30px -10px rgba(14,159,110,0.5);
+  }
+
+  /* ---------- TESTIMONIAL ---------- */
+  .testimonial{
+    background: var(--white);
+    padding: 100px 0;
+  }
+  .testimonial-inner{
+    max-width: 780px; margin: 0 auto; text-align:center;
+  }
+  .testimonial blockquote{
+    font-family: var(--display);
+    font-weight:500; font-style:italic;
+    font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+    color: var(--navy-900);
+    line-height:1.45;
+    margin-bottom: 30px;
+  }
+  .testimonial-author{
+    display:flex; align-items:center; justify-content:center; gap:12px;
+  }
+  .author-avatar{
+    width:42px; height:42px; border-radius:50%;
+    background: linear-gradient(135deg, var(--navy-700), var(--navy-900));
+  }
+  .author-name{ font-weight:600; color:var(--navy-900); font-size:0.94rem; }
+  .author-role{ color: var(--ink-500); font-size:0.86rem; }
+
+  /* ---------- FINAL CTA ---------- */
+  .final-cta{
+    background: var(--navy-950);
+    padding: 110px 0;
+    position:relative;
+    overflow:hidden;
+  }
+  .final-cta::before{
+    content:"";
+    position:absolute; inset:0;
+    background: radial-gradient(500px 300px at 50% 0%, rgba(52,211,153,0.14), transparent 65%);
+  }
+  .final-cta-inner{
+    position:relative;
+    text-align:center; max-width:620px; margin:0 auto;
+  }  .final-cta h2{
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(2rem, 3.4vw, 2.8rem);
+    color: var(--white);
+    margin-bottom: 20px;
+    letter-spacing:-0.032em;
+  }
+  .final-cta p{
+    color: rgba(255,255,255,0.62);
+    font-size: 1.05rem;
+    margin-bottom: 38px;
+  }
+  .final-actions{ display:flex; gap:20px; justify-content:center; }
+
+  /* ---------- FOOTER ---------- */
+  footer{
+    background: var(--navy-950);
+    border-top: 1px solid rgba(255,255,255,0.07);
+    padding: 64px 0 36px;
+  }
+  .footer-grid{
+    display:grid; grid-template-columns: 1.4fr repeat(3, 1fr);
+    gap: 40px;
+    margin-bottom: 50px;
+  }
+  .footer-brand p{
+    color: rgba(255,255,255,0.5);
+    font-size:0.9rem; line-height:1.6;
+    margin-top:16px; max-width:280px;
+  }
+  .footer-col h4{
+    color: rgba(255,255,255,0.85);
+    font-size:0.86rem; font-weight:600;
+    margin-bottom:18px;
+  }
+  .footer-col ul{ display:flex; flex-direction:column; gap:12px; }
+  .footer-col a{
+    color: rgba(255,255,255,0.5); font-size:0.88rem;
+    transition: color .2s ease;
+  }
+  .footer-col a:hover{ color: var(--emerald-400); }
+  .footer-bottom{
+    display:flex; justify-content:space-between; align-items:center;
+    padding-top: 30px; border-top: 1px solid rgba(255,255,255,0.07);
+    flex-wrap:wrap; gap:16px;
+  }
+  .footer-bottom p{ color: rgba(255,255,255,0.4); font-size:0.82rem; }
+  .footer-legal{ display:flex; gap:24px; }
+  .footer-legal a{ color: rgba(255,255,255,0.4); font-size:0.82rem; }
+  .footer-legal a:hover{ color: rgba(255,255,255,0.8); }
+
+  /* ---------- REVEAL ON SCROLL ---------- */
+  .reveal{
+    opacity:0; transform: translateY(24px);
+    transition: opacity .7s ease, transform .7s ease;
+  }
+  .reveal.is-visible{ opacity:1; transform:none; }
+
+  /* ---------- RESPONSIVE ---------- */
+  @media (max-width: 980px){
+    .hero-grid{ grid-template-columns:1fr; }
+    .mockup{ order:-1; }
+    .feature-grid{ grid-template-columns: 1fr 1fr; }
+    .calc-grid{ grid-template-columns: 1fr; }
+    .pricing-grid{ grid-template-columns: 1fr; }
+    .price-card.featured{ transform:none; order:-1; }
+    .footer-grid{ grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 680px){
+    .nav-links, .nav-cta .btn-ghost-light{ display:none; }
+    .nav-toggle{ display:flex; }
+    .nav-inner{ align-items:center; gap:12px; }
+    .hero{ padding: 110px 0 70px; }
+    .hero-grid{ gap: 40px; }
+    .hero-actions{ flex-direction:column; align-items:flex-start; gap:16px; width:100%; }
+    .hero-actions .btn{ width:100%; }
+    .hero-proof{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .mockup{ padding:24px; }
+    .mockup-cards{ grid-template-columns: 1fr; }
+    .logo-strip{ padding: 28px 0; }
+    .feature-grid{ grid-template-columns: 1fr; }
+    .calc-controls, .calc-output{ padding: 28px; }
+    .pricing-grid{ grid-template-columns: 1fr; }
+    .price-card{ padding: 28px 22px; }
+    .footer-grid{ grid-template-columns: 1fr; }
+    section{ padding: 64px 0; }
+    .final-actions{ flex-direction:column; width:100%; }
+    .final-actions .btn{ width:100%; }
+    .footer-bottom{ flex-direction:column; align-items:flex-start; gap:12px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav" id="nav">
+  <div class="container nav-inner">
+    <div class="logo"><span class="logo-mark"></span>Kasflow</div>
+    <div class="nav-links">
+      <a href="#functies">Functies</a>
+      <a href="#rekentool">Rekentool</a>
+      <a href="#tarieven">Tarieven</a>
+      <a href="#klanten">Klanten</a>
+    </div>
+    <div class="nav-cta">
+      <a href="login.html" class="btn-ghost-light">Inloggen</a>
+      <a href="#tarieven" class="btn btn-primary">Start gratis</a>
+    </div>
+    <button class="nav-toggle" aria-label="Menu"><span></span></button>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <span class="eyebrow"><span class="dot"></span>Live gekoppeld aan je bank &amp; BTW-aangifte</span>
+      <h1>Boekhouding die <em>meetelt</em>,<br>niet alleen optelt.</h1>
+      <p class="lede">Kasflow verwerkt facturen, bonnetjes en BTW automatisch — en laat je in real time zien waar je onderneming staat. Geen losse Excel-sheets, geen verrassingen in Q4.</p>
+      <div class="hero-actions">
+        <a href="#tarieven" class="btn btn-primary">Start gratis proefperiode</a>
+        <a href="#rekentool" class="btn-ghost-light" style="color:var(--white); border-bottom:1px solid rgba(255,255,255,0.3); padding-bottom:3px;">Bekijk de rekentool →</a>
+      </div>
+      <div class="hero-proof">
+        <div class="proof-item"><span class="proof-num">12.400+</span><span class="proof-label">ondernemers aan boord</span></div>
+        <div class="proof-item"><span class="proof-num">98,6%</span><span class="proof-label">aangiftes op tijd</span></div>
+        <div class="proof-item"><span class="proof-num">4,9/5</span><span class="proof-label">gemiddelde beoordeling</span></div>
+      </div>
+    </div>
+
+    <div class="mockup reveal">
+      <div class="mockup-glow"></div>
+      <div class="mockup-head">
+        <span class="mockup-title">Dashboard — deze maand</span>
+        <span class="mockup-badge"><span class="dot"></span>live</span>
+      </div>
+      <div class="mockup-cards">
+        <div class="mockup-card">
+          <div class="mc-label"><span>Omzet</span></div>
+          <div class="mc-value" id="tick-revenue">€ 0</div>
+          <div class="mc-delta">↑ 12,4% t.o.v. vorige maand</div>
+        </div>
+        <div class="mockup-card">
+          <div class="mc-label"><span>BTW gereserveerd</span></div>
+          <div class="mc-value" id="tick-btw">€ 0</div>
+          <div class="mc-delta">automatisch apart gezet</div>
+        </div>
+        <div class="mockup-card wide">
+          <div class="mc-label"><span>Facturen verwerkt</span><span id="tick-invoices" style="font-family:var(--numeric); color:#fff;">0</span></div>
+          <svg class="sparkline" viewBox="0 0 300 40" preserveAspectRatio="none">
+            <polyline points="0,32 30,28 60,30 90,20 120,24 150,14 180,18 210,10 240,14 270,6 300,9" fill="none" stroke="#34D399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+            <polyline points="0,32 30,28 60,30 90,20 120,24 150,14 180,18 210,10 240,14 270,6 300,9 300,40 0,40" fill="url(#sparkGrad)" stroke="none" opacity="0.5"/>
+            <defs>
+              <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#34D399" stop-opacity="0.35"/>
+                <stop offset="100%" stop-color="#34D399" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+      </div>
+      <div class="mockup-footer-row">
+        <span style="font-size:0.72rem; color:rgba(255,255,255,0.5);">Kwartaaldoel</span>
+        <div class="mini-progress"><div class="mini-progress-fill"></div></div>
+        <span style="font-family:var(--numeric); font-size:0.72rem; color:var(--emerald-400);">72%</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="logo-strip">
+  <div class="container logo-strip-inner">
+    <span class="logo-strip-label">Vertrouwd door ondernemers bij</span>
+    <div class="logo-row">
+      <span class="fake-logo">Noordhoek &amp; Co</span>
+      <span class="fake-logo">Studio Veer</span>
+      <span class="fake-logo">Marisol</span>
+      <span class="fake-logo">De Bouwsmid</span>
+      <span class="fake-logo">Havenlicht</span>
+    </div>
+  </div>
+</div>
+
+<section class="features" id="functies">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-eyebrow">Functies</span>
+      <h2>Eén systeem, van bonnetje tot balans.</h2>
+      <p>Elk onderdeel van Kasflow is gebouwd om cijfers direct bruikbaar te maken — niet pas bij de jaarafsluiting.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0E9F6E" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+        </div>
+        <h3>Facturen die zichzelf sturen</h3>
+        <p>Stel een keer een sjabloon in, en Kasflow verstuurt, herinnert en matcht binnenkomende betalingen automatisch.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0E9F6E" stroke-width="1.8"><path d="M12 3v18M5 8l7-5 7 5M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8"/></svg>
+        </div>
+        <h3>BTW die zich apart zet</h3>
+        <p>Elke ontvangen betaling wordt automatisch gesplitst — zodat het BTW-deel nooit per ongeluk wordt uitgegeven.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0E9F6E" stroke-width="1.8"><path d="M4 19h16M7 15l3-4 3 3 5-7"/></svg>
+        </div>
+        <h3>Cijfers in gewone taal</h3>
+        <p>Geen grootboekrekeningen om te leren. Kasflow laat zien wat je verdient, uitgeeft en overhoudt — in real time.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0E9F6E" stroke-width="1.8"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16"/></svg>
+        </div>
+        <h3>Bonnetjes via één foto</h3>
+        <p>Fotografeer een bon en Kasflow herkent bedrag, BTW-tarief en categorie — klaar voor de administratie.</p>
+      </div>
+      <div class="feature-card reveal spot">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="1.8"><path d="M12 2l2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5L12 2z"/></svg>
+        </div>
+        <h3>Aangifte in twee klikken</h3>
+        <p>Kasflow bereidt je BTW-aangifte automatisch voor op basis van je geboekte facturen. Controleren, akkoord, verzonden.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0E9F6E" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+        </div>
+        <h3>Live koppeling met je bank</h3>
+        <p>Transacties komen automatisch binnen en worden binnen seconden gematcht aan facturen en bonnetjes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="calc-section" id="rekentool">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-eyebrow">Rekentool</span>
+      <h2>Zie in real time wat je overhoudt.</h2>
+      <p>Verschuif je omzet en kosten en bekijk direct wat Kasflow voor je berekent — inclusief BTW-reservering en geschat resultaat.</p>
+    </div>
+
+    <div class="calc-grid">
+      <div class="calc-controls reveal">
+        <div class="calc-field">
+          <label>Maandomzet <span class="val" id="rev-val">€ 8.000</span></label>
+          <input type="range" id="rev-slider" min="1000" max="30000" step="500" value="8000">
+        </div>
+        <div class="calc-field">
+          <label>Maandelijkse kosten <span class="val" id="cost-val">€ 2.200</span></label>
+          <input type="range" id="cost-slider" min="200" max="15000" step="100" value="2200">
+        </div>
+        <div class="calc-field">
+          <label>BTW-tarief</label>
+          <div class="segmented" id="btw-segmented">
+            <button data-rate="0.21" class="active">21%</button>
+            <button data-rate="0.09">9%</button>
+            <button data-rate="0">0%</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="calc-output reveal">
+        <span class="calc-output-label">Geschat nettoresultaat per maand</span>
+        <span class="calc-output-value" id="calc-net">€ 4.760</span>
+        <span class="calc-output-sub" id="calc-margin">59% marge</span>
+        <div class="calc-breakdown">
+          <div class="breakdown-row"><span class="b-label">Omzet</span><span class="b-val" id="bd-rev">€ 8.000</span></div>
+          <div class="breakdown-row"><span class="b-label">BTW gereserveerd</span><span class="b-val" id="bd-btw">€ 1.680</span></div>
+          <div class="breakdown-row"><span class="b-label">Kosten</span><span class="b-val" id="bd-cost">€ 2.200</span></div>
+          <div class="breakdown-row"><span class="b-label">Vrij te besteden</span><span class="b-val" id="bd-net" style="color:#34D399;">€ 4.760</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="pricing" id="tarieven">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-eyebrow">Tarieven</span>
+      <h2>Eén prijs per maand. Geen kleine lettertjes.</h2>
+      <p>Alle plannen bevatten onbeperkt facturen, live bankkoppeling en automatische BTW-berekening.</p>
+    </div>
+    <div class="pricing-grid">
+      <div class="price-card reveal">
+        <div class="price-name">Starter</div>
+        <div class="price-tagline">Voor zzp'ers die net beginnen</div>
+        <div class="price-amount"><span class="num">€19</span><span class="per">/ maand</span></div>
+        <ul class="price-list">
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Onbeperkt facturen</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Automatische BTW-reservering</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>1 bankkoppeling</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>E-mail support</li>
+        </ul>
+        <a href="signup.html" class="price-cta">Start gratis</a>
+      </div>
+
+      <div class="price-card featured reveal">
+        <div class="price-badge">Meest gekozen</div>
+        <div class="price-name">Groei</div>
+        <div class="price-tagline">Voor ondernemers met personeel of groeiplannen</div>
+        <div class="price-amount"><span class="num">€39</span><span class="per">/ maand</span></div>
+        <ul class="price-list">
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Alles uit Starter</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Onbeperkt bankkoppelingen</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Automatische BTW-aangifte</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Bonnen scannen via app</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Prioriteit-support</li>
+        </ul>
+        <a href="signup.html" class="price-cta">Start gratis</a>
+      </div>
+
+      <div class="price-card reveal">
+        <div class="price-name">Onderneming</div>
+        <div class="price-tagline">Voor teams met meerdere entiteiten</div>
+        <div class="price-amount"><span class="num">€79</span><span class="per">/ maand</span></div>
+        <ul class="price-list">
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Alles uit Groei</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Meerdere bedrijven in één account</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Rollen &amp; rechten per gebruiker</li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Persoonlijke accountmanager</li>
+        </ul>
+        <a href="mailto:info@kasflow.nl" class="price-cta">Neem contact op</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="testimonial" id="klanten">
+  <div class="container testimonial-inner reveal">
+    <blockquote>"Ik zag voor het eerst in jaren precies waar mijn geld naartoe ging — en de BTW stond al klaar toen ik aangifte moest doen."</blockquote>
+    <div class="testimonial-author">
+      <div class="author-avatar"></div>
+      <div>
+        <div class="author-name">Sanne Verhoeven</div>
+        <div class="author-role">Eigenaar, Studio Veer</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="container final-cta-inner reveal">
+    <h2>Zet je administratie op <em>automatisch</em>.</h2>
+    <p>Begin vandaag nog gratis. Geen creditcard nodig, geen verplichtingen.</p>
+    <div class="final-actions">
+      <a href="#tarieven" class="btn btn-primary">Start gratis proefperiode</a>
+      <a href="signup.html" class="btn-ghost-light" style="color:var(--white); border:1px solid rgba(255,255,255,0.2); padding:13px 26px; border-radius:999px;">Plan een demo</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <div class="logo"><span class="logo-mark"></span>Kasflow</div>
+        <p>Boekhouding die meetelt. Gebouwd voor zelfstandigen en kleine teams die willen weten waar ze staan — zonder er een dag per week aan kwijt te zijn.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Product</h4>
+        <ul>
+          <li><a href="#functies">Functies</a></li>
+          <li><a href="#rekentool">Rekentool</a></li>
+          <li><a href="#tarieven">Tarieven</a></li>
+          <li><a href="#functies">Integraties</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Bedrijf</h4>
+        <ul>
+          <li><a href="#klanten">Over ons</a></li>
+          <li><a href="#klanten">Klanten</a></li>
+          <li><a href="#tarieven">Vacatures</a></li>
+          <li><a href="mailto:info@kasflow.nl">Contact</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Support</h4>
+        <ul>
+          <li><a href="mailto:support@kasflow.nl">Helpcentrum</a></li>
+          <li><a href="#tarieven">Status</a></li>
+          <li><a href="#functies">Beveiliging</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2026 Kasflow B.V. Alle rechten voorbehouden.</p>
+      <div class="footer-legal">
+        <a href="privacy.html">Privacy</a>
+        <a href="voorwaarden.html">Voorwaarden</a>
+        <a href="verwerkersovereenkomst.html">Verwerking</a>
+        <a href="login.html">Inloggen</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Nav scroll state
+  const nav = document.getElementById('nav');
+  window.addEventListener('scroll', () => {
+    nav.classList.toggle('scrolled', window.scrollY > 40);
+  });
+
+  // Reveal on scroll
+  const revealEls = document.querySelectorAll('.reveal');
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if(entry.isIntersecting){
+        entry.target.classList.add('is-visible');
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.15 });
+  revealEls.forEach(el => io.observe(el));
+
+  // Ticking numbers in hero mockup
+  function formatEUR(n){
+    return '€ ' + Math.round(n).toLocaleString('nl-NL');
+  }
+  function animateCount(el, target, duration, formatter, delay){
+    setTimeout(() => {
+      const start = performance.now();
+      function step(now){
+        const p = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = formatter(target * eased);
+        if(p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }, delay);
+  }
+  const revenueEl = document.getElementById('tick-revenue');
+  const btwEl = document.getElementById('tick-btw');
+  const invoicesEl = document.getElementById('tick-invoices');
+  animateCount(revenueEl, 18420, 1600, formatEUR, 200);
+  animateCount(btwEl, 3868, 1600, formatEUR, 400);
+  animateCount(invoicesEl, 214, 1400, (n) => Math.round(n).toString(), 600);
+
+  // gentle re-tick loop for ambient life
+  setInterval(() => {
+    const jitter = 18420 + Math.round((Math.random()-0.5)*400);
+    animateCount(revenueEl, jitter, 900, formatEUR, 0);
+  }, 6000);
+
+  // Calculator
+  const revSlider = document.getElementById('rev-slider');
+  const costSlider = document.getElementById('cost-slider');
+  const segButtons = document.querySelectorAll('#btw-segmented button');
+  let btwRate = 0.21;
+
+  const revValEl = document.getElementById('rev-val');
+  const costValEl = document.getElementById('cost-val');
+  const netEl = document.getElementById('calc-net');
+  const marginEl = document.getElementById('calc-margin');
+  const bdRev = document.getElementById('bd-rev');
+  const bdBtw = document.getElementById('bd-btw');
+  const bdCost = document.getElementById('bd-cost');
+  const bdNet = document.getElementById('bd-net');
+
+  function fmt(n){ return '€ ' + Math.round(n).toLocaleString('nl-NL'); }
+
+  function recalc(){
+    const rev = parseFloat(revSlider.value);
+    const cost = parseFloat(costSlider.value);
+    const btw = rev * btwRate;
+    const net = rev - btw - cost;
+    const margin = rev > 0 ? Math.round((net / rev) * 100) : 0;
+
+    revValEl.textContent = fmt(rev);
+    costValEl.textContent = fmt(cost);
+    netEl.textContent = fmt(net);
+    marginEl.textContent = margin + '% marge';
+    bdRev.textContent = fmt(rev);
+    bdBtw.textContent = fmt(btw);
+    bdCost.textContent = fmt(cost);
+    bdNet.textContent = fmt(net);
+  }
+
+  revSlider.addEventListener('input', recalc);
+  costSlider.addEventListener('input', recalc);
+  segButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      segButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      btwRate = parseFloat(btn.dataset.rate);
+      recalc();
+    });
+  });
+
+  recalc();
+
+  // Mobile nav toggle (simple show/hide of links as a dropdown)
+  const toggle = document.querySelector('.nav-toggle');
+  toggle.addEventListener('click', () => {
+    nav.classList.toggle('open');
+  });
+  window.addEventListener('resize', () => {
+    if(window.innerWidth > 680){
+      nav.classList.remove('open');
+    }
+  });
+</script>
+
+</body>
+</html>

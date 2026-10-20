@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Instellingen</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="instellingen">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Instellingen</h1>
+        <div class="topbar-sub">Beheer je bedrijfsgegevens, facturen, meldingen en beveiliging.</div>
+      </div>
+      <div class="topbar-actions">
+        <a href="dashboard.html" class="btn btn-outline">Naar dashboard</a>
+      </div>
+    </div>
+
+    <div class="alert warning" id="verify-banner" hidden>
+      <div>
+        <strong>Bevestig je e-mailadres.</strong> Je kunt alles al gebruiken, maar facturen versturen naar klanten werkt pas als je adres bevestigd is.
+        <button type="button" class="btn btn-outline btn-sm" id="resend-verification" style="margin-left:8px">Nieuwe link sturen</button>
+      </div>
+    </div>
+
+    <div class="settings-grid">
+      <section class="settings-card wide">
+        <div class="settings-head">
+          <div class="settings-avatar" data-user-initials aria-hidden="true">K</div>
+          <div>
+            <h2>Bedrijfsgegevens</h2>
+            <p class="row-sub">Deze gegevens komen op je facturen. Ze zijn verplicht volgens de factuureisen van de Belastingdienst.</p>
+          </div>
+        </div>
+        <form id="company-form" novalidate>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="company-name">Bedrijfsnaam</label>
+              <input id="company-name" class="field-control" type="text" maxlength="200" required>
+            </div>
+            <div>
+              <label class="field-label" for="company-phone">Telefoon</label>
+              <input id="company-phone" class="field-control" type="tel" maxlength="50" placeholder="020 123 4567">
+            </div>
+          </div>
+          <div class="field-group" style="margin-top:18px">
+            <label class="field-label" for="company-street">Straat en huisnummer</label>
+            <input id="company-street" class="field-control" type="text" maxlength="200" placeholder="Prinsengracht 1">
+          </div>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="company-postal">Postcode</label>
+              <input id="company-postal" class="field-control" type="text" maxlength="20" placeholder="1015 DV">
+            </div>
+            <div>
+              <label class="field-label" for="company-city">Plaats</label>
+              <input id="company-city" class="field-control" type="text" maxlength="120" placeholder="Amsterdam">
+            </div>
+          </div>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="company-country">Land</label>
+              <input id="company-country" class="field-control" type="text" maxlength="120" value="Nederland">
+            </div>
+            <div>
+              <label class="field-label" for="company-iban">IBAN voor betalingen</label>
+              <input id="company-iban" class="field-control" type="text" maxlength="42" placeholder="NL91ABNA0417164300">
+            </div>
+          </div>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="company-kvk">KVK-nummer</label>
+              <input id="company-kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" placeholder="12345678" required>
+            </div>
+            <div>
+              <label class="field-label" for="company-vat">BTW-id</label>
+              <input id="company-vat" class="field-control" type="text" maxlength="20" placeholder="NL123456789B01">
+            </div>
+          </div>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="company-terms">Betalingstermijn</label>
+              <select id="company-terms" class="field-control">
+                <option value="7">7 dagen</option>
+                <option value="14">14 dagen</option>
+                <option value="30">30 dagen</option>
+                <option value="60">60 dagen</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label" for="company-prefix">Voorvoegsel factuurnummers</label>
+              <input id="company-prefix" class="field-control" type="text" maxlength="12" placeholder="KV">
+              <div class="field-hint">Bijv. KV2026-001.</div>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="company-save">Bedrijfsgegevens opslaan</button>
+          </div>
+          <p class="form-note" id="company-feedback" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="settings-card">
+        <h2>Account</h2>
+        <p>Je e-mailadres gebruik je om in te loggen en om je facturen te versturen.</p>
+        <div class="field-group">
+          <label class="field-label" for="account-email">E-mailadres</label>
+          <input id="account-email" class="field-control" type="email" disabled>
+          <div class="field-hint" id="account-verified">Status onbekend.</div>
+        </div>
+        <div class="account-row" style="margin-top:22px">
+          <div>
+            <strong>Sessie</strong>
+            <div class="row-sub">Je blijft ingelogd tot 12 uur na je laatste bezoek. Bij het wijzigen van je wachtwoord worden andere apparaten uitgelogd.</div>
+          </div>
+          <button type="button" class="btn btn-outline" data-logout>Uitloggen</button>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <h2>Meldingen</h2>
+        <p>Kies waarover je bericht wilt krijgen. We bewaren deze voorkeuren bij je account.</p>
+        <div class="toggle-list">
+          <div class="toggle-item">
+            <span><strong>E-mailmeldingen</strong><small>Nieuwe facturen, betalingen en btw-deadlines.</small></span>
+            <label class="switch"><span class="sr-only">E-mailmeldingen</span><input type="checkbox" id="notify-email"><span class="switch-track"></span></label>
+          </div>
+          <div class="toggle-item">
+            <span><strong>Sms-waarschuwingen</strong><small>Alleen bij belangrijke gebeurtenissen.</small></span>
+            <label class="switch"><span class="sr-only">Sms-waarschuwingen</span><input type="checkbox" id="notify-sms"><span class="switch-track"></span></label>
+          </div>
+          <div class="toggle-item">
+            <span><strong>Automatische back-up</strong><small>Dagelijkse reservekopie van je administratie.</small></span>
+            <label class="switch"><span class="sr-only">Automatische back-up</span><input type="checkbox" id="notify-backup"><span class="switch-track"></span></label>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" id="notify-save">Voorkeuren opslaan</button>
+        </div>
+        <p class="form-note" id="notify-feedback" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="settings-card">
+        <h2>Beveiliging</h2>
+        <p>Kies een wachtwoord van minimaal 12 tekens. Gebruik geen wachtwoord dat je ergens anders gebruikt.</p>
+        <form id="password-form" novalidate>
+          <div class="field-group">
+            <label class="field-label" for="current-password">Huidig wachtwoord</label>
+            <input id="current-password" class="field-control" type="password" autocomplete="current-password" required>
+          </div>
+          <div class="field-group" style="margin-top:18px">
+            <label class="field-label" for="new-password">Nieuw wachtwoord</label>
+            <input id="new-password" class="field-control" type="password" minlength="12" autocomplete="new-password" required>
+          </div>
+          <div class="field-group" style="margin-top:18px">
+            <label class="field-label" for="new-password-repeat">Nieuw wachtwoord herhalen</label>
+            <input id="new-password-repeat" class="field-control" type="password" minlength="12" autocomplete="new-password" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="password-save">Wachtwoord wijzigen</button>
+          </div>
+          <p class="form-note" id="password-feedback" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="settings-card">
+        <h2>App op je apparaat</h2>
+        <p>Zet Kasflow op je beginscherm of bureaublad. De app start dan als een eigen venster en onthoudt je sessie.</p>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" data-install-app>Kasflow installeren</button>
+        </div>
+        <p class="field-hint" id="install-hint">Werkt in Chrome, Edge, Safari (iPhone: Deel → Zet op beginscherm) en Android.</p>
+      </section>
+
+      <section class="settings-card wide">
+        <h2>Jouw gegevens</h2>
+        <p>Je administratie is van jou. Download op elk moment een volledige kopie: alle klanten, facturen en btw-overzichten als JSON plus je originele bonbestanden.</p>
+        <div class="form-actions">
+          <a class="btn btn-outline" id="export-account" href="/api/account/export">Download volledige export (.zip)</a>
+        </div>
+        <h3 class="section-title">Recente activiteit</h3>
+        <ul class="activity-list" id="activity-list">
+          <li class="muted">Activiteit laden…</li>
+        </ul>
+      </section>
+
+      <section class="settings-card wide danger">
+        <h2>Account verwijderen</h2>
+        <p>Dit verwijdert je account, klanten, facturen en bonnen direct en definitief; Kasflow bewaart daarna niets meer. Je bent zelf verplicht je administratie 7 jaar te bewaren, dus download eerst je volledige export.</p>
+        <form id="delete-form" novalidate>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="delete-password">Je wachtwoord</label>
+              <input id="delete-password" class="field-control" type="password" autocomplete="current-password" required>
+            </div>
+            <div>
+              <label class="field-label" for="delete-confirm">Typ VERWIJDER</label>
+              <input id="delete-confirm" class="field-control" type="text" placeholder="VERWIJDER" required>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-danger" id="delete-account">Account definitief verwijderen</button>
+          </div>
+          <p class="form-note" id="delete-feedback" role="status" aria-live="polite"></p>
+        </form>
+        <div class="legal-links">
+          <a href="privacy.html">Privacyverklaring</a>
+          <a href="voorwaarden.html">Algemene voorwaarden</a>
+          <a href="verwerkersovereenkomst.html">Verwerkersovereenkomst</a>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, note, setBusy, applyUser, escapeHtml } = Kasflow;
+  const companyForm = document.getElementById('company-form');
+  const companyFeedback = document.getElementById('company-feedback');
+  const notifyFeedback = document.getElementById('notify-feedback');
+  const passwordFeedback = document.getElementById('password-feedback');
+  const deleteFeedback = document.getElementById('delete-feedback');
+  const verifyBanner = document.getElementById('verify-banner');
+
+  function value(id) {
+    return document.getElementById(id).value.trim();
+  }
+
+  function profilePayload() {
+    return {
+      company_name: value('company-name'),
+      kvk_number: value('company-kvk'),
+      vat_number: value('company-vat') || null,
+      phone: value('company-phone') || null,
+      street: value('company-street') || null,
+      postal_code: value('company-postal') || null,
+      city: value('company-city') || null,
+      country: value('company-country') || 'Nederland',
+      iban: value('company-iban') || null,
+      payment_term_days: Number(value('company-terms')) || 30,
+      invoice_prefix: value('company-prefix') || null,
+      notify_email: document.getElementById('notify-email').checked,
+      notify_sms: document.getElementById('notify-sms').checked,
+      notify_backup: document.getElementById('notify-backup').checked
+    };
+  }
+
+  function fillValue(id, next) {
+    document.getElementById(id).value = next == null ? '' : next;
+  }
+
+  function fillProfile(user) {
+    fillValue('company-name', user.company_name);
+    fillValue('company-kvk', user.kvk_number);
+    fillValue('company-vat', user.vat_number);
+    fillValue('company-phone', user.phone);
+    fillValue('company-street', user.street);
+    fillValue('company-postal', user.postal_code);
+    fillValue('company-city', user.city);
+    fillValue('company-country', user.country || 'Nederland');
+    fillValue('company-iban', user.iban);
+    fillValue('company-prefix', user.invoice_prefix);
+    document.getElementById('company-terms').value = String(user.payment_term_days || 30);
+    document.getElementById('account-email').value = user.email;
+    document.getElementById('account-verified').textContent = user.email_verified
+      ? 'Dit adres is bevestigd.'
+      : 'Dit adres is nog niet bevestigd.';
+    document.getElementById('notify-email').checked = Boolean(user.notify_email);
+    document.getElementById('notify-sms').checked = Boolean(user.notify_sms);
+    document.getElementById('notify-backup').checked = Boolean(user.notify_backup);
+    verifyBanner.hidden = Boolean(user.email_verified);
+    applyUser(user);
+  }
+
+  async function saveProfile(button, feedbackElement, successMessage) {
+    const payload = profilePayload();
+    if (!payload.company_name) {
+      note(feedbackElement, 'Vul je bedrijfsnaam in.', 'error');
+      return;
+    }
+    if (!/^[0-9]{8}$/.test(payload.kvk_number)) {
+      note(feedbackElement, 'Een KVK-nummer bestaat uit 8 cijfers.', 'error');
+      return;
+    }
+    if (payload.iban && !/^[A-Z]{2}[0-9]{2}[A-Z0-9]{6,30}$/.test(payload.iban.replace(/\s/g, '').toUpperCase())) {
+      note(feedbackElement, 'Vul een geldig IBAN in, bijvoorbeeld NL91ABNA0417164300.', 'error');
+      return;
+    }
+    setBusy(button, true, 'Opslaan…');
+    try {
+      const user = await api('/api/auth/me', { method: 'PATCH', body: payload });
+      fillProfile(user);
+      note(feedbackElement, successMessage, 'success');
+    } catch (error) {
+      note(feedbackElement, error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  companyForm.addEventListener('submit', event => {
+    event.preventDefault();
+    saveProfile(document.getElementById('company-save'), companyFeedback, 'Bedrijfsgegevens opgeslagen.');
+  });
+
+  document.getElementById('notify-save').addEventListener('click', event => {
+    saveProfile(event.currentTarget, notifyFeedback, 'Meldingsvoorkeuren opgeslagen.');
+  });
+
+  document.getElementById('resend-verification').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    setBusy(button, true, 'Versturen…');
+    try {
+      const result = await api('/api/auth/resend-verification', { method: 'POST' });
+      note(companyFeedback, result.status === 'sent'
+        ? 'Nieuwe bevestigingslink verstuurd naar je e-mailadres.'
+        : 'Je e-mailadres is bevestigd.', 'success');
+      if (result.status !== 'sent') {
+        verifyBanner.hidden = true;
+        document.getElementById('account-verified').textContent = 'Dit adres is bevestigd.';
+      }
+    } catch (error) {
+      note(companyFeedback, error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  });
+
+  document.getElementById('password-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const current = document.getElementById('current-password').value;
+    const next = document.getElementById('new-password').value;
+    const repeat = document.getElementById('new-password-repeat').value;
+    if (next.length < 12) {
+      note(passwordFeedback, 'Je nieuwe wachtwoord moet minimaal 12 tekens zijn.', 'error');
+      return;
+    }
+    if (next !== repeat) {
+      note(passwordFeedback, 'De twee nieuwe wachtwoorden zijn niet gelijk.', 'error');
+      return;
+    }
+    const button = document.getElementById('password-save');
+    setBusy(button, true, 'Wijzigen…');
+    try {
+      await api('/api/auth/password', {
+        method: 'POST',
+        body: { current_password: current, new_password: next }
+      });
+      event.target.reset();
+      note(passwordFeedback, 'Wachtwoord gewijzigd. Gebruik het nieuwe wachtwoord bij je volgende keer inloggen.', 'success');
+    } catch (error) {
+      note(passwordFeedback, error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  });
+
+  document.getElementById('delete-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const password = document.getElementById('delete-password').value;
+    const confirmText = document.getElementById('delete-confirm').value.trim();
+    if (confirmText.toUpperCase() !== 'VERWIJDER') {
+      note(deleteFeedback, 'Typ VERWIJDER in het tweede veld om te bevestigen.', 'error');
+      return;
+    }
+    if (!window.confirm('Weet je zeker dat je je account en al je administratie definitief wilt verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
+    const button = document.getElementById('delete-account');
+    setBusy(button, true, 'Verwijderen…');
+    try {
+      await api('/api/account', {
+        method: 'DELETE',
+        body: { password, confirm: confirmText }
+      });
+      window.location.href = 'index.html';
+    } catch (error) {
+      note(deleteFeedback, error.message, 'error');
+      setBusy(button, false);
+    }
+  });
+
+  const ACTIVITY_LABELS = {
+    'account.register': 'Account aangemaakt',
+    'account.login': 'Ingelogd',
+    'account.profile': 'Bedrijfsgegevens bijgewerkt',
+    'account.password': 'Wachtwoord gewijzigd',
+    'account.password_reset': 'Wachtwoord opnieuw ingesteld',
+    'account.email_verified': 'E-mailadres bevestigd',
+    'account.verification_sent': 'Bevestigingslink verstuurd',
+    'account.export': 'Gegevens geëxporteerd',
+    'invoice.create': 'Factuur aangemaakt',
+    'invoice.send': 'Factuur verstuurd',
+    'invoice.pdf': 'Factuur-PDF gedownload',
+    'invoice.paid': 'Factuur betaald',
+    'invoice.reopened': 'Factuur weer open gezet'
+  };
+
+  async function loadActivity() {
+    const list = document.getElementById('activity-list');
+    try {
+      const events = await api('/api/account/activity');
+      if (!events.length) {
+        list.innerHTML = '<li class="muted">Nog geen activiteit.</li>';
+        return;
+      }
+      list.innerHTML = events.map(event => {
+        const label = ACTIVITY_LABELS[event.action] || event.action;
+        const detail = event.detail ? ' — ' + escapeHtml(event.detail) : '';
+        return '<li><span>' + escapeHtml(label) + detail + '</span>' +
+          '<time datetime="' + event.created_at + '">' + Kasflow.formatShortDate(event.created_at) + '</time></li>';
+      }).join('');
+    } catch (error) {
+      list.innerHTML = '<li class="muted">Activiteit kon niet worden geladen.</li>';
+    }
+  }
+
+  Kasflow.ready.then(user => {
+    if (user) {
+      fillProfile(user);
+      loadActivity();
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

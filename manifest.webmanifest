@@ -1,0 +1,26 @@
+{
+  "name": "Kasflow — boekhouden voor zzp'ers",
+  "short_name": "Kasflow",
+  "description": "Facturen, btw en bonnetjes op één plek.",
+  "lang": "nl",
+  "start_url": "/dashboard.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F6F7F9",
+  "theme_color": "#0A1830",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

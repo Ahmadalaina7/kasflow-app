@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — BTW &amp; aangifte</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="btw">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>BTW &amp; aangifte</h1>
+        <div class="topbar-sub" id="vat-summary">Btw-gegevens laden…</div>
+      </div>
+      <div class="topbar-actions">
+        <a href="facturen.html" class="btn btn-outline">Naar facturen</a>
+        <button type="button" class="btn btn-primary" id="approve-button" disabled>Concept goedkeuren</button>
+      </div>
+    </div>
+
+    <div class="alert warning">
+      <div><strong>Hulpmiddel, geen officiële aangifte.</strong> De bedragen komen uit de btw op je eigen facturen.
+      Voorbelasting, correcties, verlegde btw en jaarregels zijn hier niet in meegenomen. Laat een aangifte altijd controleren
+      door je boekhouder voordat je indient.</div>
+    </div>
+
+    <p id="vat-feedback" class="form-note" role="status" aria-live="polite"></p>
+
+    <div class="metric-grid">
+      <div class="metric-card accent">
+        <div class="metric-label">Btw over je facturen dit kwartaal</div>
+        <div class="metric-value" id="vat-due">—</div>
+        <div class="metric-meta" id="vat-due-meta">Berekend uit je facturen</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Omzet excl. btw dit kwartaal</div>
+        <div class="metric-value" id="vat-net">—</div>
+        <div class="metric-meta" id="vat-net-meta">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Status van dit kwartaal</div>
+        <div class="metric-value" id="vat-status">—</div>
+        <div class="metric-meta" id="vat-status-meta">Nog niet goedgekeurd</div>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 id="rate-title">Btw per tarief</h2>
+        <span class="pill muted" id="rate-period">—</span>
+      </div>
+      <div class="rate-list" id="rate-list"></div>
+      <p class="vat-disclaimer">Deadline voor deze periode: <strong id="rate-deadline">—</strong>.
+      Zorg dat je je administratie rond hebt voordat je aangifte doet.</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Laatste vier kwartalen</h2>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Periode</th><th>Facturen</th><th style="text-align:right">Omzet excl. btw</th><th style="text-align:right">Btw</th><th>Deadline</th><th>Status</th></tr>
+          </thead>
+          <tbody id="vat-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, money, formatShortDate, note, escapeHtml, setBusy } = Kasflow;
+  const feedback = document.getElementById('vat-feedback');
+  const summary = document.getElementById('vat-summary');
+  const approveButton = document.getElementById('approve-button');
+  let overview = null;
+
+  function rateLabel(rateBps) {
+    return (rateBps / 100).toLocaleString('nl-NL', { maximumFractionDigits: 2 }) + '%';
+  }
+
+  function render() {
+    const current = overview.current;
+
+    document.getElementById('vat-due').textContent = money(current.vat_cents);
+    document.getElementById('vat-due-meta').textContent = current.invoice_count
+      ? 'Uit ' + current.invoice_count + (current.invoice_count === 1 ? ' factuur' : ' facturen') + ' in ' + current.label
+      : 'Nog geen facturen in ' + current.label;
+    document.getElementById('vat-net').textContent = money(current.net_cents);
+    document.getElementById('vat-net-meta').textContent = current.label + ' · ' +
+      formatShortDate(current.start_date) + ' t/m ' + formatShortDate(current.end_date);
+
+    const approved = Boolean(current.approved_at);
+    document.getElementById('vat-status').innerHTML = approved
+      ? '<span class="status-ok">Goedgekeurd</span>'
+      : '<span class="status-concept">Concept</span>';
+    document.getElementById('vat-status-meta').textContent = approved
+      ? 'Goedgekeurd op ' + formatShortDate(current.approved_on || current.approved_at)
+      : 'Nog niet goedgekeurd';
+    approveButton.disabled = current.invoice_count === 0;
+    approveButton.textContent = approved ? 'Goedkeuring intrekken' : 'Concept goedkeuren';
+
+    document.getElementById('rate-period').textContent = current.label;
+    document.getElementById('rate-title').textContent = 'Btw per tarief — ' + current.label;
+    document.getElementById('rate-deadline').textContent = formatShortDate(current.deadline);
+
+    document.getElementById('rate-list').innerHTML = current.rates.length
+      ? current.rates.map(rate =>
+          '<div class="rate-row"><span class="rate-name">' + rateLabel(rate.rate_bps) + ' · omzet ' + money(rate.net_cents) + '</span>' +
+          '<span class="rate-value">' + money(rate.vat_cents) + '</span></div>'
+        ).join('')
+      : '<div class="empty-state" style="padding:22px"><h3>Nog geen btw in dit kwartaal</h3><p>Maak een factuur aan; daarna zie je hier per tarief hoeveel btw je hebt gefactureerd.</p><a class="btn btn-primary btn-sm" href="factuur.html">Nieuwe factuur</a></div>';
+
+    document.getElementById('vat-table-body').innerHTML = overview.quarters.map(quarter =>
+      '<tr>' +
+      '<td data-label="Periode" class="row-name">' + escapeHtml(quarter.label) + '</td>' +
+      '<td data-label="Facturen">' + quarter.invoice_count + '</td>' +
+      '<td data-label="Omzet excl. btw" class="amount" style="text-align:right">' + money(quarter.net_cents) + '</td>' +
+      '<td data-label="Btw" class="amount" style="text-align:right">' + money(quarter.vat_cents) + '</td>' +
+      '<td data-label="Deadline">' + formatShortDate(quarter.deadline) + '</td>' +
+      '<td data-label="Status">' + (quarter.approved_at
+        ? '<span class="badge paid"><span class="dot" aria-hidden="true"></span>Goedgekeurd</span>'
+        : '<span class="badge pending"><span class="dot" aria-hidden="true"></span>Concept</span>') + '</td>' +
+      '</tr>'
+    ).join('');
+
+    summary.textContent = current.invoice_count
+      ? current.label + ': ' + money(current.vat_cents) + ' btw over ' + money(current.net_cents) + ' omzet.'
+      : current.label + ': nog geen facturen.';
+  }
+
+  async function loadVat() {
+    try {
+      overview = await api('/api/vat');
+      render();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      summary.textContent = 'Btw-gegevens tijdelijk niet beschikbaar.';
+    }
+  }
+
+  approveButton.addEventListener('click', async () => {
+    if (!overview) return;
+    const current = overview.current;
+    const approved = Boolean(current.approved_at);
+    setBusy(approveButton, true, approved ? 'Intrekken…' : 'Goedkeuren…');
+    try {
+      if (approved) {
+        await api('/api/vat/approval?year=' + current.year + '&quarter=' + current.quarter, { method: 'DELETE' });
+        overview.current.approved_at = null;
+        overview.current.approved_on = null;
+        overview.quarters[0].approved_at = null;
+        overview.quarters[0].approved_on = null;
+        note(feedback, 'Goedkeuring van ' + current.label + ' is ingetrokken.', 'success');
+      } else {
+        const updated = await api('/api/vat/approve', {
+          method: 'POST',
+          body: { year: current.year, quarter: current.quarter }
+        });
+        overview.current = updated;
+        overview.quarters[0] = updated;
+        note(feedback, current.label + ' is goedgekeurd. Je kunt dit later nog aanpassen.', 'success');
+      }
+      render();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    } finally {
+      setBusy(approveButton, false);
+      render();
+    }
+  });
+
+  Kasflow.ready.then(loadVat);
+})();
+</script>
+
+</body>
+</html>

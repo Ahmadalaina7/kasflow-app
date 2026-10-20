@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<title>Kasflow — Nieuw wachtwoord</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body>
+<div class="auth-shell single">
+  <div class="auth-form-wrap">
+    <form class="auth-form" id="reset-form" novalidate>
+      <a class="auth-brand" href="index.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+      <h1 id="reset-title">Nieuw wachtwoord instellen</h1>
+      <p class="sub" id="reset-sub">Vul je e-mailadres in; we sturen je een link om een nieuw wachtwoord te kiezen.</p>
+
+      <div class="field-group" id="reset-email-field">
+        <label class="field-label" for="reset-email">E-mailadres</label>
+        <input id="reset-email" class="field-control" type="email" autocomplete="username" placeholder="jij@bedrijf.nl" maxlength="320" required>
+      </div>
+
+      <div class="field-group" id="reset-password-field" hidden>
+        <label class="field-label" for="reset-password">Nieuw wachtwoord</label>
+        <input id="reset-password" class="field-control" type="password" minlength="12" maxlength="1024" autocomplete="new-password" placeholder="Minimaal 12 tekens" required>
+        <div class="field-hint">Minimaal 12 tekens. Je andere apparaten worden uitgelogd.</div>
+      </div>
+      <div class="field-group" id="reset-repeat-field" style="margin-top:18px" hidden>
+        <label class="field-label" for="reset-repeat">Nieuw wachtwoord herhalen</label>
+        <input id="reset-repeat" class="field-control" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+      </div>
+
+      <button type="submit" class="auth-submit" id="reset-submit">Stuur mij een link</button>
+      <p class="auth-note" id="reset-feedback" role="status" aria-live="polite"></p>
+      <p class="auth-alt"><a href="login.html">Terug naar inloggen</a></p>
+    </form>
+  </div>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const form = document.getElementById('reset-form');
+  const feedback = document.getElementById('reset-feedback');
+  const submit = document.getElementById('reset-submit');
+  const title = document.getElementById('reset-title');
+  const sub = document.getElementById('reset-sub');
+  const emailField = document.getElementById('reset-email-field');
+  const emailInput = document.getElementById('reset-email');
+  const passwordField = document.getElementById('reset-password-field');
+  const repeatField = document.getElementById('reset-repeat-field');
+  const token = new URLSearchParams(window.location.search).get('token');
+
+  function useTokenMode() {
+    title.textContent = 'Nieuw wachtwoord instellen';
+    sub.textContent = 'Kies een nieuw wachtwoord van minimaal 12 tekens.';
+    emailField.hidden = true;
+    emailInput.required = false;
+    passwordField.hidden = false;
+    repeatField.hidden = false;
+    submit.textContent = 'Wachtwoord opslaan';
+  }
+
+  if (token) useTokenMode();
+  else emailInput.focus();
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    Kasflow.note(feedback, '');
+    Kasflow.setBusy(submit, true, 'Bezig…');
+    try {
+      if (token) {
+        const password = document.getElementById('reset-password').value;
+        if (password.length < 12) throw new Error('Je nieuwe wachtwoord moet minimaal 12 tekens zijn.');
+        if (password !== document.getElementById('reset-repeat').value) {
+          throw new Error('De twee wachtwoorden zijn niet gelijk.');
+        }
+        await Kasflow.api('/api/auth/reset-password', { method: 'POST', body: { token, password } });
+        window.location.replace('dashboard.html');
+        return;
+      }
+
+      const email = emailInput.value.trim();
+      if (!email) throw new Error('Vul je e-mailadres in.');
+      await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      title.textContent = 'Check je inbox';
+      sub.textContent = 'Als dit adres bij ons bekend is, ontvang je binnen enkele minuten een e-mail met een link.';
+      Kasflow.note(feedback, 'De link is 60 minuten geldig en werkt één keer.', 'success');
+      emailField.hidden = true;
+      emailInput.required = false;
+    } catch (error) {
+      Kasflow.note(feedback, error.message, 'error');
+    } finally {
+      Kasflow.setBusy(submit, false);
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Bank</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="bank">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Bank</h1>
+        <div class="topbar-sub">Koppel je zakelijke rekening om betalingen automatisch te herkennen.</div>
+      </div>
+      <div class="topbar-actions">
+        <a href="facturen.html" class="btn btn-outline">Naar facturen</a>
+      </div>
+    </div>
+
+    <div class="alert warning">
+      <div><strong>Nog geen bank gekoppeld.</strong> Kasflow kan niet rechtstreeks bij je bank. Daarvoor is een erkende
+      bankkoppelprovider (PSD2) nodig met jouw expliciete toestemming. Deel nooit je bankwachtwoord met een app.</div>
+    </div>
+
+    <div class="settings-grid" style="margin-top:24px">
+      <section class="settings-card">
+        <h2>Wat er nodig is</h2>
+        <p>Een bankkoppeling werkt in drie stappen. Zolang die er niet is, blijft dit scherm leeg — we tonen geen
+        verzonnen rekeningen of transacties.</p>
+        <div class="toggle-list">
+          <div class="toggle-item">
+            <span><strong>1. Koppelprovider kiezen</strong><small>Een partij met een PSD2-vergunning die bij jouw bank mag koppelen.</small></span>
+          </div>
+          <div class="toggle-item">
+            <span><strong>2. Toestemming geven bij je bank</strong><small>Je logt zelf in bij de bank en geeft per rekening toestemming.</small></span>
+          </div>
+          <div class="toggle-item">
+            <span><strong>3. Transacties koppelen</strong><small>Betalingen worden daarna naast je facturen gelegd.</small></span>
+          </div>
+        </div>
+        <div class="form-actions">
+          <a class="btn btn-primary" href="mailto:support@kasflow.nl?subject=Bankkoppeling%20aanvragen">Koppeling aanvragen</a>
+          <a class="btn btn-outline" href="instellingen.html">Bedrijfsgegevens controleren</a>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <h2>Rekeningen</h2>
+        <p>Hier verschijnen je gekoppelde rekeningen met de laatste synchronisatie.</p>
+        <div class="empty-state" style="padding:26px 8px">
+          <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 10l9-6 9 6"/><path d="M5 10h14v9H5z"/><path d="M9 19v-6m6 6v-6"/></svg></div>
+          <h3>Geen rekeningen gekoppeld</h3>
+          <p>Na het afronden van de koppeling zie je hier je rekeningen en hun status.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Transacties</h2>
+      </div>
+      <div class="empty-state">
+        <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div>
+        <h3>Nog geen transacties</h3>
+        <p>Zodra een rekening is gekoppeld, verschijnen hier je banktransacties met status en tegenpartij.</p>
+        <a class="btn btn-outline btn-sm" href="bonnetjes.html">Bonnen toevoegen</a>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app-shell.js"></script>
+</body>
+</html>

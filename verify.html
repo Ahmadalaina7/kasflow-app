@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<title>Kasflow — E-mailadres bevestigen</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body>
+<div class="auth-shell single">
+  <div class="auth-form-wrap">
+    <div class="auth-form" id="verify-card">
+      <a class="auth-brand" href="index.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+      <h1 id="verify-title">E-mailadres bevestigen</h1>
+      <p class="sub" id="verify-sub">Een moment, we controleren je link.</p>
+      <div class="verify-state" id="verify-state" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Bezig met controleren…</span>
+      </div>
+      <div class="form-actions" id="verify-actions" hidden>
+        <a class="btn btn-primary" href="dashboard.html" id="verify-dashboard">Naar mijn administratie</a>
+        <a class="btn btn-outline" href="login.html" id="verify-login" hidden>Naar inloggen</a>
+      </div>
+      <p class="auth-foot">Werkt de link niet meer? Vraag een nieuwe aan door opnieuw te registreren met hetzelfde adres of mail support@kasflow.nl.</p>
+    </div>
+  </div>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const title = document.getElementById('verify-title');
+  const sub = document.getElementById('verify-sub');
+  const state = document.getElementById('verify-state');
+  const actions = document.getElementById('verify-actions');
+  const dashboardLink = document.getElementById('verify-dashboard');
+  const loginLink = document.getElementById('verify-login');
+  const token = new URLSearchParams(window.location.search).get('token');
+
+  function show(tone, message, success) {
+    state.className = 'verify-state ' + tone;
+    state.innerHTML = '<span>' + Kasflow.escapeHtml(message) + '</span>';
+    actions.hidden = false;
+    dashboardLink.hidden = !success;
+    loginLink.hidden = success;
+    if (!token) dashboardLink.hidden = true;
+  }
+
+  if (!token) {
+    title.textContent = 'Geen bevestigingslink';
+    sub.textContent = 'Deze pagina hoort bij de link uit onze e-mail.';
+    show('warning', 'Open de link uit je e-mail om je adres te bevestigen. Vraag een nieuwe aan via het inlogscherm.', false);
+    return;
+  }
+
+  fetch('/api/auth/verify-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ token: token })
+  })
+    .then(async response => {
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload && payload.detail ? payload.detail : 'Bevestigen is niet gelukt.');
+      }
+      title.textContent = 'Je e-mailadres is bevestigd';
+      sub.textContent = 'Je account is klaar voor gebruik.';
+      show('success', 'Bedankt! Je kunt nu facturen maken en versturen.', true);
+      window.history.replaceState({}, '', 'verify.html');
+    })
+    .catch(error => {
+      title.textContent = 'Bevestigen is niet gelukt';
+      sub.textContent = 'De link is verlopen of al gebruikt.';
+      show('error', error.message, false);
+    });
+})();
+</script>
+</body>
+</html>

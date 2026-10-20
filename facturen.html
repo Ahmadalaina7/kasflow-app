@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Facturen</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="facturen">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Facturen</h1>
+        <div class="topbar-sub" id="invoice-summary">Facturen laden…</div>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" class="btn btn-outline" id="export-invoices">Exporteren</button>
+        <a href="factuur.html" class="btn btn-primary">+ Nieuwe factuur</a>
+      </div>
+    </div>
+
+    <p id="invoice-feedback" class="form-note" role="status" aria-live="polite"></p>
+
+    <div class="list-toolbar">
+      <div class="filter-pills" role="group" aria-label="Filter op status">
+        <button type="button" class="filter-pill active" data-filter="all" aria-pressed="true">Alle (0)</button>
+        <button type="button" class="filter-pill" data-filter="paid" aria-pressed="false">Betaald (0)</button>
+        <button type="button" class="filter-pill" data-filter="pending" aria-pressed="false">Openstaand (0)</button>
+        <button type="button" class="filter-pill" data-filter="overdue" aria-pressed="false">Te laat (0)</button>
+      </div>
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <label class="sr-only" for="invoice-search">Zoek op klant of factuurnummer</label>
+        <input id="invoice-search" type="search" placeholder="Zoek klant of nummer" autocomplete="off">
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Klant</th><th>Nummer</th><th>Factuurdatum</th><th>Vervaldatum</th><th>Status</th><th style="text-align:right">Bedrag</th><th></th></tr>
+          </thead>
+          <tbody id="invoice-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog class="modal" id="invoice-dialog" aria-labelledby="invoice-dialog-title">
+  <div class="modal-head">
+    <div>
+      <h2 id="invoice-dialog-title">Factuur</h2>
+      <div class="modal-sub" id="invoice-dialog-sub"></div>
+    </div>
+    <button type="button" class="icon-button" id="invoice-dialog-close" aria-label="Sluit factuur">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="modal-body">
+    <div class="detail-grid">
+      <div><div class="detail-label">Factuurdatum</div><div class="detail-value" id="detail-invoice-date">—</div></div>
+      <div><div class="detail-label">Vervaldatum</div><div class="detail-value" id="detail-due-date">—</div></div>
+      <div><div class="detail-label">Status</div><div class="detail-value" id="detail-status">—</div></div>
+      <div><div class="detail-label">Klant</div><div class="detail-value" id="detail-customer">—</div></div>
+      <div><div class="detail-label">Verzonden</div><div class="detail-value" id="detail-sent">—</div></div>
+    </div>
+    <div class="table-wrap">
+      <table class="detail-lines">
+        <thead><tr><th>Omschrijving</th><th class="num">Aantal</th><th class="num">Prijs</th><th class="num">Btw</th><th class="num">Bedrag</th></tr></thead>
+        <tbody id="detail-lines"></tbody>
+      </table>
+    </div>
+    <div class="summary-card">
+      <div class="summary-row"><span>Subtotaal excl. btw</span><strong id="detail-subtotal">—</strong></div>
+      <div class="summary-row"><span>Btw</span><strong id="detail-vat">—</strong></div>
+      <div class="summary-row total"><span>Totaal</span><strong id="detail-total">—</strong></div>
+    </div>
+    <p class="form-note" id="detail-feedback" role="status" aria-live="polite"></p>
+  </div>
+  <div class="modal-foot">
+    <button type="button" class="btn btn-outline" id="detail-close">Sluiten</button>
+    <a class="btn btn-outline" id="detail-pdf" href="#">Download PDF</a>
+    <button type="button" class="btn btn-outline" id="detail-send">Verstuur per e-mail</button>
+    <button type="button" class="btn btn-primary" id="detail-status-button">Markeer als betaald</button>
+  </div>
+</dialog>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, money, formatShortDate, statusOf, statusBadge, note, escapeHtml, setBusy } = Kasflow;
+  const pills = [...document.querySelectorAll('.filter-pill')];
+  const searchInput = document.getElementById('invoice-search');
+  const tableBody = document.getElementById('invoice-table-body');
+  const feedback = document.getElementById('invoice-feedback');
+  const summary = document.getElementById('invoice-summary');
+  const dialog = document.getElementById('invoice-dialog');
+  let invoices = [];
+  let customerNames = new Map();
+  let activeInvoice = null;
+
+  function setFilter(filter) {
+    pills.forEach(pill => {
+      const active = pill.dataset.filter === filter;
+      pill.classList.toggle('active', active);
+      pill.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  function currentFilter() {
+    const active = document.querySelector('.filter-pill.active');
+    return active ? active.dataset.filter : 'all';
+  }
+
+  function updateCounts() {
+    const counts = { all: invoices.length, paid: 0, pending: 0, overdue: 0 };
+    invoices.forEach(invoice => { counts[statusOf(invoice)] += 1; });
+    pills.forEach(pill => {
+      const label = { all: 'Alle', paid: 'Betaald', pending: 'Openstaand', overdue: 'Te laat' }[pill.dataset.filter];
+      pill.textContent = label + ' (' + counts[pill.dataset.filter] + ')';
+    });
+    const openCents = invoices
+      .filter(invoice => statusOf(invoice) !== 'paid')
+      .reduce((sum, invoice) => sum + invoice.total_cents, 0);
+    summary.textContent = invoices.length
+      ? invoices.length + (invoices.length === 1 ? ' factuur' : ' facturen') + ' — ' + money(openCents) + ' staat open.'
+      : 'Nog geen facturen.';
+  }
+
+  function emptyState(title, copy, actionHref, actionLabel) {
+    return '<div class="empty-state">' +
+      '<div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h5"/></svg></div>' +
+      '<h3>' + title + '</h3><p>' + copy + '</p>' +
+      (actionHref ? '<a class="btn btn-primary btn-sm" href="' + actionHref + '">' + actionLabel + '</a>' : '') +
+      '</div>';
+  }
+
+  function renderInvoices() {
+    const filter = currentFilter();
+    const query = searchInput.value.trim().toLowerCase();
+    const visible = invoices.filter(invoice => {
+      const name = customerNames.get(invoice.customer_id) || '';
+      const matchesStatus = filter === 'all' || statusOf(invoice) === filter;
+      const matchesQuery = !query || (name + ' ' + invoice.number).toLowerCase().includes(query);
+      return matchesStatus && matchesQuery;
+    });
+
+    tableBody.replaceChildren();
+    if (!visible.length) {
+      const row = tableBody.insertRow();
+      row.className = 'empty-row';
+      const cell = row.insertCell();
+      cell.colSpan = 7;
+      cell.innerHTML = invoices.length
+        ? emptyState('Geen facturen in deze selectie', 'Pas het filter of je zoekopdracht aan om andere facturen te zien.', null, null)
+        : emptyState('Nog geen facturen', 'Maak je eerste factuur aan en houd betaalstatus en btw automatisch bij.', 'factuur.html', 'Nieuwe factuur');
+      return;
+    }
+
+    visible.forEach(invoice => {
+      const status = statusOf(invoice);
+      const row = tableBody.insertRow();
+      row.innerHTML =
+        '<td data-label="Klant" class="row-name">' + escapeHtml(customerNames.get(invoice.customer_id)) + '</td>' +
+        '<td data-label="Nummer" class="row-sub">' + escapeHtml(invoice.number) + '</td>' +
+        '<td data-label="Factuurdatum">' + formatShortDate(invoice.invoice_date) + '</td>' +
+        '<td data-label="Vervaldatum">' + formatShortDate(invoice.due_date) + '</td>' +
+        '<td data-label="Status">' + statusBadge(status) + '</td>' +
+        '<td data-label="Bedrag" class="amount" style="text-align:right">' + money(invoice.total_cents) + '</td>' +
+        '<td class="cell-actions"><button type="button" class="btn btn-outline btn-sm" data-view="' + invoice.id + '">Bekijken</button></td>';
+    });
+  }
+
+  function openInvoice(invoiceId) {
+    const invoice = invoices.find(item => item.id === Number(invoiceId));
+    if (!invoice) return;
+    activeInvoice = invoice;
+    note(document.getElementById('detail-feedback'), '');
+    document.getElementById('invoice-dialog-title').textContent = 'Factuur ' + invoice.number;
+    document.getElementById('invoice-dialog-sub').textContent =
+      customerNames.get(invoice.customer_id) + ' · ' + money(invoice.total_cents);
+    document.getElementById('detail-invoice-date').textContent = formatShortDate(invoice.invoice_date);
+    document.getElementById('detail-due-date').textContent = formatShortDate(invoice.due_date);
+    document.getElementById('detail-status').innerHTML = statusBadge(statusOf(invoice));
+    document.getElementById('detail-customer').textContent = customerNames.get(invoice.customer_id) || '—';
+    document.getElementById('detail-lines').innerHTML = invoice.lines.map(line =>
+      '<tr>' +
+      '<td>' + escapeHtml(line.description) + '</td>' +
+      '<td class="num">' + Number(line.quantity).toLocaleString('nl-NL', { maximumFractionDigits: 3 }) + '</td>' +
+      '<td class="num">' + money(line.unit_price_cents) + '</td>' +
+      '<td class="num">' + (line.vat_rate_bps / 100).toLocaleString('nl-NL', { maximumFractionDigits: 2 }) + '%</td>' +
+      '<td class="num">' + money(line.net_cents + line.vat_cents) + '</td>' +
+      '</tr>'
+    ).join('');
+    document.getElementById('detail-sent').textContent = invoice.sent_at
+      ? 'Verzonden op ' + formatShortDate(invoice.sent_at)
+      : 'Nog niet verstuurd';
+    document.getElementById('detail-pdf').href = '/api/invoices/' + invoice.id + '/pdf';
+    document.getElementById('detail-send').textContent = invoice.sent_at
+      ? 'Opnieuw versturen'
+      : 'Verstuur per e-mail';
+    document.getElementById('detail-subtotal').textContent = money(invoice.subtotal_cents);
+    document.getElementById('detail-vat').textContent = money(invoice.vat_cents);
+    document.getElementById('detail-total').textContent = money(invoice.total_cents);
+    const statusButton = document.getElementById('detail-status-button');
+    statusButton.textContent = invoice.status === 'paid' ? 'Markeer als onbetaald' : 'Markeer als betaald';
+    statusButton.dataset.originalLabel = statusButton.textContent;
+    statusButton.dataset.nextStatus = invoice.status === 'paid' ? 'pending' : 'paid';
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function closeDialog() {
+    if (dialog.open) dialog.close();
+  }
+
+  async function toggleInvoiceStatus() {
+    if (!activeInvoice) return;
+    const button = document.getElementById('detail-status-button');
+    const nextStatus = button.dataset.nextStatus || 'paid';
+    setBusy(button, true, 'Opslaan…');
+    try {
+      const updated = await api('/api/invoices/' + activeInvoice.id, {
+        method: 'PATCH',
+        body: { status: nextStatus }
+      });
+      invoices = invoices.map(invoice => invoice.id === updated.id ? updated : invoice);
+      activeInvoice = updated;
+      updateCounts();
+      renderInvoices();
+      openInvoice(updated.id);
+      delete button.dataset.originalLabel;
+      note(document.getElementById('detail-feedback'),
+        nextStatus === 'paid' ? 'Factuur staat nu op betaald.' : 'Factuur staat weer open.',
+        'success');
+    } catch (error) {
+      note(document.getElementById('detail-feedback'), error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function sendInvoice() {
+    if (!activeInvoice) return;
+    const button = document.getElementById('detail-send');
+    const name = customerNames.get(activeInvoice.customer_id) || 'deze klant';
+    if (!window.confirm('Factuur ' + activeInvoice.number + ' per e-mail naar ' + name + ' versturen?')) return;
+    setBusy(button, true, 'Versturen…');
+    try {
+      const result = await api('/api/invoices/' + activeInvoice.id + '/send', {
+        method: 'POST',
+        body: {}
+      });
+      const updated = await api('/api/invoices/' + activeInvoice.id);
+      invoices = invoices.map(invoice => invoice.id === updated.id ? updated : invoice);
+      activeInvoice = updated;
+      openInvoice(updated.id);
+      // The dialog has been re-rendered, so keep the new label instead of the
+      // label setBusy stored before the request.
+      delete button.dataset.originalLabel;
+      note(document.getElementById('detail-feedback'), result.mode === 'smtp'
+        ? 'Factuur verstuurd naar ' + result.to + '.'
+        : 'E-mail opgebouwd in logmodus (geen SMTP geconfigureerd) voor ' + result.to + '.',
+        result.mode === 'smtp' ? 'success' : 'warning');
+    } catch (error) {
+      note(document.getElementById('detail-feedback'), error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function loadInvoices() {
+    note(feedback, '');
+    summary.textContent = 'Facturen laden…';
+    try {
+      const [invoiceData, customers] = await Promise.all([
+        api('/api/invoices'),
+        api('/api/customers')
+      ]);
+      invoices = invoiceData;
+      customerNames = new Map(customers.map(customer => [customer.id, customer.name]));
+      updateCounts();
+      renderInvoices();
+
+      const params = new URLSearchParams(window.location.search);
+      const filter = params.get('filter');
+      if (filter && ['all', 'paid', 'pending', 'overdue'].includes(filter)) setFilter(filter);
+      const requestedInvoice = params.get('invoice');
+      if (requestedInvoice) openInvoice(requestedInvoice);
+      const saved = params.get('saved');
+      if (saved) note(feedback, 'Factuur ' + saved + ' is opgeslagen.', 'success');
+      if (params.toString()) {
+        window.history.replaceState({}, '', 'facturen.html');
+      }
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      summary.textContent = 'Facturen tijdelijk niet beschikbaar.';
+      tableBody.innerHTML = '<tr class="empty-row"><td colspan="7">' +
+        emptyState('Kon facturen niet laden', error.message, null, null) + '</td></tr>';
+    }
+  }
+
+  pills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      setFilter(pill.dataset.filter);
+      renderInvoices();
+    });
+  });
+
+  searchInput.addEventListener('input', renderInvoices);
+
+  tableBody.addEventListener('click', event => {
+    const trigger = event.target.closest('[data-view]');
+    if (trigger) openInvoice(trigger.dataset.view);
+  });
+
+  document.getElementById('invoice-dialog-close').addEventListener('click', closeDialog);
+  document.getElementById('detail-close').addEventListener('click', closeDialog);
+  document.getElementById('detail-status-button').addEventListener('click', toggleInvoiceStatus);
+  document.getElementById('detail-send').addEventListener('click', sendInvoice);
+  dialog.addEventListener('click', event => {
+    if (event.target === dialog) closeDialog();
+  });
+
+  document.getElementById('export-invoices').addEventListener('click', () => {
+    if (!invoices.length) {
+      note(feedback, 'Er zijn nog geen facturen om te exporteren.', 'warning');
+      return;
+    }
+    const rows = [
+      ['Klant', 'Factuurnummer', 'Factuurdatum', 'Vervaldatum', 'Status', 'Subtotaal', 'Btw', 'Totaal'],
+      ...invoices.map(invoice => [
+        customerNames.get(invoice.customer_id) || 'Onbekende klant',
+        invoice.number,
+        invoice.invoice_date,
+        invoice.due_date,
+        Kasflow.statusLabel(statusOf(invoice)),
+        (invoice.subtotal_cents / 100).toFixed(2),
+        (invoice.vat_cents / 100).toFixed(2),
+        (invoice.total_cents / 100).toFixed(2)
+      ])
+    ];
+    const csv = rows.map(row => row.map(value => {
+      const text = String(value == null ? '' : value);
+      const safeValue = /^[\s]*[=+\-@]/.test(text) ? "'" + text : text;
+      return '"' + safeValue.replaceAll('"', '""') + '"';
+    }).join(';')).join('\r\n');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
+    link.download = 'kasflow-facturen.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+    note(feedback, 'Export gestart.', 'success');
+  });
+
+  Kasflow.ready.then(loadInvoices);
+})();
+</script>
+
+</body>
+</html>

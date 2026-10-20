@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Bonnetjes</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="bonnetjes">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Bonnetjes</h1>
+        <div class="topbar-sub" id="receipt-summary">Bonnen laden…</div>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" class="btn btn-primary" id="upload-shortcut">+ Bon toevoegen</button>
+      </div>
+    </div>
+
+    <p id="receipt-feedback" class="form-note" role="status" aria-live="polite"></p>
+
+    <section class="panel" id="upload-panel">
+      <div class="panel-head">
+        <h2>Bon toevoegen</h2>
+        <span class="pill muted">JPG, PNG, WEBP of PDF · max 5 MB</span>
+      </div>
+      <div class="alert" style="margin-bottom:20px">
+        <div>Automatische herkenning (OCR) is nog niet gekoppeld. Je vult de gegevens zelf in; het bestand wordt veilig bij je administratie opgeslagen.</div>
+      </div>
+      <form id="receipt-form" novalidate>
+        <div class="upload-panel">
+          <div class="upload-dropzone" id="dropzone" role="button" tabindex="0" aria-label="Kies of sleep een bonbestand">
+            <span class="upload-icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+            </span>
+            <strong>Sleep je bon hierheen</strong>
+            <span>of klik om een bestand te kiezen. Foto's van bonnen werken het beste.</span>
+            <span class="file-chip" id="file-chip"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg><span id="file-chip-name"></span></span>
+            <input type="file" id="receipt-file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden>
+          </div>
+
+          <div class="field-group">
+            <div class="field-row">
+              <div>
+                <label class="field-label" for="receipt-vendor">Winkel of leverancier</label>
+                <input id="receipt-vendor" class="field-control" type="text" placeholder="Jumbo supermarkt" maxlength="160" required>
+              </div>
+              <div>
+                <label class="field-label" for="receipt-date">Datum</label>
+                <input id="receipt-date" class="field-control" type="date" required>
+              </div>
+            </div>
+            <div class="field-row">
+              <div>
+                <label class="field-label" for="receipt-amount">Bedrag inclusief btw</label>
+                <input id="receipt-amount" class="field-control" type="number" min="0" step="0.01" placeholder="18,50" required>
+              </div>
+              <div>
+                <label class="field-label" for="receipt-category">Categorie</label>
+                <select id="receipt-category" class="field-control">
+                  <option>Kantoor</option>
+                  <option>Reiskosten</option>
+                  <option>Representatie</option>
+                  <option>Software</option>
+                  <option>Materiaal</option>
+                  <option>Overig</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary" id="receipt-save">Bon opslaan</button>
+              <button type="reset" class="btn btn-outline" id="receipt-reset">Leegmaken</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel" style="margin-top:24px">
+      <div class="panel-head">
+        <h2>Je bonnen</h2>
+        <span class="pill muted" id="receipt-count">0 bonnen</span>
+      </div>
+      <div class="receipt-grid" id="receipt-list"></div>
+    </section>
+  </main>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, money, formatShortDate, note, escapeHtml, setBusy, todayIso } = Kasflow;
+  const form = document.getElementById('receipt-form');
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('receipt-file');
+  const fileChip = document.getElementById('file-chip');
+  const fileChipName = document.getElementById('file-chip-name');
+  const feedback = document.getElementById('receipt-feedback');
+  const list = document.getElementById('receipt-list');
+  const summary = document.getElementById('receipt-summary');
+  const countPill = document.getElementById('receipt-count');
+  const dateInput = document.getElementById('receipt-date');
+  const amountInput = document.getElementById('receipt-amount');
+  const saveButton = document.getElementById('receipt-save');
+  let receipts = [];
+
+  dateInput.value = todayIso();
+
+  function emptyState() {
+    return '<div class="empty-state" style="grid-column:1/-1">' +
+      '<div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg></div>' +
+      '<h3>Nog geen bonnen</h3><p>Voeg je eerste bon toe. Je ziet direct wat je dit jaar aan kosten hebt vastgelegd.</p>' +
+      '<button type="button" class="btn btn-primary btn-sm" id="empty-upload">+ Bon toevoegen</button></div>';
+  }
+
+  function isImage(receipt) {
+    return (receipt.content_type || '').startsWith('image/');
+  }
+
+  function render() {
+    if (!receipts.length) {
+      list.innerHTML = emptyState();
+      return;
+    }
+    list.innerHTML = receipts.map(receipt => {
+      const fileUrl = '/api/receipts/' + receipt.id + '/file';
+      const media = isImage(receipt)
+        ? '<img src="' + fileUrl + '" alt="Bon van ' + escapeHtml(receipt.vendor) + '" loading="lazy">'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 13h6M9 17h4"/></svg>';
+      return '<article class="receipt-card">' +
+        '<a class="receipt-thumb" href="' + fileUrl + '" target="_blank" rel="noopener" aria-label="Open bon van ' + escapeHtml(receipt.vendor) + '">' + media + '</a>' +
+        '<div class="receipt-body">' +
+        '<div class="receipt-vendor">' + escapeHtml(receipt.vendor) + '</div>' +
+        '<div class="receipt-meta">' + formatShortDate(receipt.receipt_date) + '</div>' +
+        '<div class="receipt-amount">' + money(receipt.amount_cents) + '</div>' +
+        '<div class="receipt-foot">' +
+        '<span class="receipt-tag">' + escapeHtml(receipt.category) + '</span>' +
+        '<button type="button" class="btn btn-danger btn-sm" data-delete="' + receipt.id + '">Verwijderen</button>' +
+        '</div></div></article>';
+    }).join('');
+  }
+
+  function updateSummary() {
+    const year = new Date().getFullYear();
+    const yearTotal = receipts
+      .filter(receipt => String(receipt.receipt_date).startsWith(String(year)))
+      .reduce((sum, receipt) => sum + receipt.amount_cents, 0);
+    summary.textContent = receipts.length
+      ? receipts.length + ' bon' + (receipts.length === 1 ? '' : 'nen') + ' — ' + money(yearTotal) + ' aan kosten in ' + year + '.'
+      : 'Nog geen bonnen toegevoegd.';
+    countPill.textContent = receipts.length + ' bon' + (receipts.length === 1 ? '' : 'nen');
+  }
+
+  async function loadReceipts() {
+    try {
+      receipts = await api('/api/receipts');
+      updateSummary();
+      render();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      summary.textContent = 'Bonnen tijdelijk niet beschikbaar.';
+      list.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><h3>Kon bonnen niet laden</h3><p>' + escapeHtml(error.message) + '</p></div>';
+    }
+  }
+
+  function setFile(file) {
+    if (!file) {
+      fileChip.classList.remove('visible');
+      fileChipName.textContent = '';
+      return;
+    }
+    fileChip.classList.add('visible');
+    fileChipName.textContent = file.name;
+  }
+
+  function validateFile(file) {
+    if (!file) return 'Kies een bestand om te uploaden.';
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!allowed.includes(file.type)) return 'Alleen JPG, PNG, WEBP of PDF-bestanden zijn toegestaan.';
+    if (file.size > 5 * 1024 * 1024) return 'Het bestand is groter dan 5 MB.';
+    return null;
+  }
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      fileInput.click();
+    }
+  });
+  fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
+  ['dragover', 'dragenter'].forEach(type => dropzone.addEventListener(type, event => {
+    event.preventDefault();
+    dropzone.classList.add('dragging');
+  }));
+  ['dragleave', 'dragend'].forEach(type => dropzone.addEventListener(type, () => dropzone.classList.remove('dragging')));
+  dropzone.addEventListener('drop', event => {
+    event.preventDefault();
+    dropzone.classList.remove('dragging');
+    const files = event.dataTransfer && event.dataTransfer.files;
+    if (files && files.length) {
+      fileInput.files = files;
+      setFile(files[0]);
+    }
+  });
+
+  document.getElementById('receipt-reset').addEventListener('click', () => {
+    setFile(null);
+    amountInput.value = '';
+    dateInput.value = todayIso();
+    note(feedback, '');
+  });
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    note(feedback, '');
+    const file = fileInput.files[0];
+    const fileError = validateFile(file);
+    if (fileError) {
+      note(feedback, fileError, 'error');
+      return;
+    }
+    const vendor = document.getElementById('receipt-vendor').value.trim();
+    const amount = amountInput.value;
+    if (!vendor) {
+      note(feedback, 'Vul de winkel of leverancier in.', 'error');
+      return;
+    }
+    if (!dateInput.value) {
+      note(feedback, 'Vul de datum van de bon in.', 'error');
+      return;
+    }
+    if (amount === '' || Number(amount) < 0) {
+      note(feedback, 'Vul een geldig bedrag in.', 'error');
+      return;
+    }
+
+    const payload = new FormData();
+    payload.append('vendor', vendor);
+    payload.append('receipt_date', dateInput.value);
+    payload.append('amount', amount);
+    payload.append('category', document.getElementById('receipt-category').value);
+    payload.append('file', file);
+
+    setBusy(saveButton, true, 'Uploaden…');
+    try {
+      await api('/api/receipts', { method: 'POST', body: payload });
+      form.reset();
+      setFile(null);
+      dateInput.value = todayIso();
+      await loadReceipts();
+      note(feedback, 'Bon opgeslagen.', 'success');
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    } finally {
+      setBusy(saveButton, false);
+    }
+  });
+
+  list.addEventListener('click', async event => {
+    if (event.target.closest('#empty-upload')) {
+      document.getElementById('upload-shortcut').click();
+      return;
+    }
+    const trigger = event.target.closest('[data-delete]');
+    if (!trigger) return;
+    const receipt = receipts.find(item => item.id === Number(trigger.dataset.delete));
+    if (!receipt) return;
+    if (!window.confirm('Bon van ' + receipt.vendor + ' verwijderen?')) return;
+    setBusy(trigger, true, 'Bezig…');
+    try {
+      await api('/api/receipts/' + receipt.id, { method: 'DELETE' });
+      await loadReceipts();
+      note(feedback, 'Bon verwijderd.', 'success');
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      setBusy(trigger, false);
+    }
+  });
+
+  document.getElementById('upload-shortcut').addEventListener('click', () => {
+    document.getElementById('upload-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.setTimeout(() => fileInput.click(), 260);
+  });
+
+  Kasflow.ready.then(loadReceipts);
+})();
+</script>
+
+</body>
+</html>

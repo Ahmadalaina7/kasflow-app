@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<title>Kasflow — Offline</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body>
+<div class="auth-shell single">
+  <div class="auth-form-wrap">
+    <div class="auth-form">
+      <a class="auth-brand" href="index.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+      <h1>Je bent offline</h1>
+      <p class="sub">Kasflow heeft verbinding nodig om je administratie te tonen. Zodra je weer online bent, werkt alles zoals altijd.</p>
+      <div class="alert">
+        <div><strong>Wat je kunt doen</strong> Controleer je internetverbinding en probeer het opnieuw. Je gegevens staan veilig op de server.</div>
+      </div>
+      <button type="button" class="auth-submit" onclick="window.location.reload()">Opnieuw proberen</button>
+      <p class="auth-alt"><a href="dashboard.html">Naar het dashboard</a></p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

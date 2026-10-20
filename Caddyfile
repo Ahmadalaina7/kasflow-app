@@ -1,0 +1,23 @@
+# Caddy regelt automatisch een Let's Encrypt-certificaat voor KASFLOW_DOMAIN
+# en zet alle verkeer om naar de app. Pas KASFLOW_DOMAIN aan in .env.
+{$KASFLOW_DOMAIN} {
+	encode zstd gzip
+
+	# Alleen versleuteld verkeer; Caddy regelt zelf de HTTP-omleiding.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Directe downloads blijven traag genoeg om te streamen.
+	reverse_proxy app:8010 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

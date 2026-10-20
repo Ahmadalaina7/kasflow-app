@@ -1,0 +1,75 @@
+# Kasflow op één Europese server: PostgreSQL, de app en Caddy voor HTTPS.
+#
+#   1. cp .env.example .env   en vul de waarden in (zie DEPLOY.md)
+#   2. docker compose up -d --build
+#
+# `docker compose logs -f app` toont de opstartmeldingen en elk verzoek.
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kasflow}
+      POSTGRES_USER: ${POSTGRES_USER:-kasflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?zet POSTGRES_PASSWORD in .env}
+      TZ: Europe/Amsterdam
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kasflow} -d ${POSTGRES_DB:-kasflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    # De database is alleen binnen het Compose-netwerk bereikbaar.
+    expose:
+      - "5432"
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      KASFLOW_ENV: production
+      KASFLOW_SECRET_KEY: ${KASFLOW_SECRET_KEY:?zet KASFLOW_SECRET_KEY in .env}
+      KASFLOW_PUBLIC_URL: ${KASFLOW_PUBLIC_URL:?zet KASFLOW_PUBLIC_URL in .env}
+      KASFLOW_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kasflow}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kasflow}
+      KASFLOW_ALLOWED_HOSTS: ${KASFLOW_ALLOWED_HOSTS:-}
+      KASFLOW_UPLOAD_DIR: /app/backend/uploads
+      KASFLOW_MAX_UPLOAD_MB: ${KASFLOW_MAX_UPLOAD_MB:-10}
+      KASFLOW_SMTP_HOST: ${KASFLOW_SMTP_HOST:-}
+      KASFLOW_SMTP_PORT: ${KASFLOW_SMTP_PORT:-587}
+      KASFLOW_SMTP_SECURITY: ${KASFLOW_SMTP_SECURITY:-starttls}
+      KASFLOW_SMTP_USER: ${KASFLOW_SMTP_USER:-}
+      KASFLOW_SMTP_PASSWORD: ${KASFLOW_SMTP_PASSWORD:-}
+      KASFLOW_MAIL_FROM: ${KASFLOW_MAIL_FROM:-}
+      KASFLOW_MAIL_FROM_NAME: ${KASFLOW_MAIL_FROM_NAME:-Kasflow}
+      TZ: Europe/Amsterdam
+    volumes:
+      - uploads:/app/backend/uploads
+    ports:
+      # Alleen lokaal bereikbaar; Caddy zet er HTTPS voor.
+      - "127.0.0.1:8010:8010"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      KASFLOW_DOMAIN: ${KASFLOW_DOMAIN:?zet KASFLOW_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:

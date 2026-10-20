@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Klanten</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="klanten">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Klanten</h1>
+        <div class="topbar-sub" id="customer-summary">Klanten laden…</div>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" class="btn btn-primary" id="new-customer">+ Nieuwe klant</button>
+      </div>
+    </div>
+
+    <p id="customer-feedback" class="form-note" role="status" aria-live="polite"></p>
+
+    <div class="list-toolbar">
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <label class="sr-only" for="customer-search">Zoek een klant</label>
+        <input id="customer-search" type="search" placeholder="Zoek op naam, e-mail of contact" autocomplete="off">
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Naam</th><th>Contact</th><th>E-mail</th><th>Telefoon</th><th style="text-align:right">Openstaand</th><th></th></tr>
+          </thead>
+          <tbody id="customer-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog class="modal" id="customer-dialog" aria-labelledby="customer-dialog-title">
+  <div class="modal-head">
+    <div>
+      <h2 id="customer-dialog-title">Nieuwe klant</h2>
+      <div class="modal-sub" id="customer-dialog-sub">Vul de gegevens van je klant in.</div>
+    </div>
+    <button type="button" class="icon-button" id="customer-dialog-close" aria-label="Sluit venster">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <form id="customer-form" novalidate>
+    <div class="modal-body">
+      <div class="field-group">
+        <label class="field-label" for="customer-name">Naam</label>
+        <input id="customer-name" class="field-control" type="text" placeholder="Havenlicht BV" maxlength="200" required>
+      </div>
+      <div class="field-row">
+        <div>
+          <label class="field-label" for="customer-contact">Contactpersoon</label>
+          <input id="customer-contact" class="field-control" type="text" placeholder="Lisa van Dijk" maxlength="200">
+        </div>
+        <div>
+          <label class="field-label" for="customer-phone">Telefoon</label>
+          <input id="customer-phone" class="field-control" type="tel" placeholder="020 123 4567" maxlength="50">
+        </div>
+      </div>
+      <div class="field-group" style="margin-top:18px">
+        <label class="field-label" for="customer-email">E-mail</label>
+        <input id="customer-email" class="field-control" type="email" placeholder="lisa@havenlicht.nl" maxlength="320">
+      </div>
+      <p class="form-note" id="customer-dialog-feedback" role="status" aria-live="polite"></p>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-outline" id="customer-cancel">Annuleren</button>
+      <button type="submit" class="btn btn-primary" id="customer-save">Opslaan</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, money, statusOf, note, escapeHtml, setBusy } = Kasflow;
+  const tbody = document.getElementById('customer-table-body');
+  const feedback = document.getElementById('customer-feedback');
+  const summary = document.getElementById('customer-summary');
+  const searchInput = document.getElementById('customer-search');
+  const dialog = document.getElementById('customer-dialog');
+  const form = document.getElementById('customer-form');
+  const dialogFeedback = document.getElementById('customer-dialog-feedback');
+  let customers = [];
+  let openByCustomer = new Map();
+  let editingId = null;
+
+  function emptyState(title, copy, actionLabel) {
+    return '<div class="empty-state">' +
+      '<div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M16 19v-1a4 4 0 00-8 0v1"/><circle cx="12" cy="8" r="4"/></svg></div>' +
+      '<h3>' + title + '</h3><p>' + copy + '</p>' +
+      (actionLabel ? '<button type="button" class="btn btn-primary btn-sm" data-action="new">' + actionLabel + '</button>' : '') +
+      '</div>';
+  }
+
+  function render() {
+    const query = searchInput.value.trim().toLowerCase();
+    const visible = customers.filter(customer =>
+      !query || [customer.name, customer.contact, customer.email, customer.phone]
+        .filter(Boolean).join(' ').toLowerCase().includes(query)
+    );
+
+    tbody.replaceChildren();
+    if (!visible.length) {
+      const row = tbody.insertRow();
+      row.className = 'empty-row';
+      const cell = row.insertCell();
+      cell.colSpan = 6;
+      cell.innerHTML = customers.length
+        ? emptyState('Geen klant gevonden', 'Pas je zoekopdracht aan om andere klanten te zien.', null)
+        : emptyState('Nog geen klanten', 'Voeg je eerste klant toe en maak daarna direct een factuur.', '+ Nieuwe klant');
+      return;
+    }
+
+    visible.forEach(customer => {
+      const openCents = openByCustomer.get(customer.id) || 0;
+      const row = tbody.insertRow();
+      row.innerHTML =
+        '<td data-label="Naam" class="row-name">' + escapeHtml(customer.name) + '</td>' +
+        '<td data-label="Contact">' + escapeHtml(customer.contact || '—') + '</td>' +
+        '<td data-label="E-mail">' + (customer.email ? '<a class="table-link" href="mailto:' + encodeURIComponent(customer.email) + '">' + escapeHtml(customer.email) + '</a>' : '—') + '</td>' +
+        '<td data-label="Telefoon">' + (customer.phone ? '<a class="table-link" href="tel:' + encodeURIComponent(customer.phone) + '">' + escapeHtml(customer.phone) + '</a>' : '—') + '</td>' +
+        '<td data-label="Openstaand" class="amount" style="text-align:right">' + (openCents ? money(openCents) : '—') + '</td>' +
+        '<td class="cell-actions">' +
+        '<button type="button" class="btn btn-outline btn-sm" data-edit="' + customer.id + '">Bewerken</button>' +
+        '<button type="button" class="btn btn-danger btn-sm" data-delete="' + customer.id + '">Verwijderen</button>' +
+        '</td>';
+    });
+  }
+
+  function openDialog(customer) {
+    editingId = customer ? customer.id : null;
+    document.getElementById('customer-dialog-title').textContent = customer ? 'Klant bewerken' : 'Nieuwe klant';
+    document.getElementById('customer-dialog-sub').textContent = customer
+      ? 'Werk de gegevens van ' + customer.name + ' bij.'
+      : 'Vul de gegevens van je klant in.';
+    document.getElementById('customer-name').value = customer ? customer.name : '';
+    document.getElementById('customer-contact').value = customer ? (customer.contact || '') : '';
+    document.getElementById('customer-email').value = customer ? (customer.email || '') : '';
+    document.getElementById('customer-phone').value = customer ? (customer.phone || '') : '';
+    note(dialogFeedback, '');
+    if (!dialog.open) dialog.showModal();
+    document.getElementById('customer-name').focus();
+  }
+
+  function closeDialog() {
+    if (dialog.open) dialog.close();
+  }
+
+  async function loadData() {
+    note(feedback, '');
+    summary.textContent = 'Klanten laden…';
+    try {
+      const [customerData, invoices] = await Promise.all([
+        api('/api/customers'),
+        api('/api/invoices')
+      ]);
+      customers = customerData;
+      openByCustomer = new Map();
+      invoices.forEach(invoice => {
+        if (statusOf(invoice) === 'paid') return;
+        openByCustomer.set(invoice.customer_id, (openByCustomer.get(invoice.customer_id) || 0) + invoice.total_cents);
+      });
+      const openCents = [...openByCustomer.values()].reduce((sum, value) => sum + value, 0);
+      summary.textContent = customers.length
+        ? customers.length + ' klant' + (customers.length === 1 ? '' : 'en') + ' — ' + money(openCents) + ' openstaand.'
+        : 'Nog geen klanten.';
+      render();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      summary.textContent = 'Klanten tijdelijk niet beschikbaar.';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">' +
+        emptyState('Kon klanten niet laden', error.message, null) + '</td></tr>';
+    }
+  }
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const name = document.getElementById('customer-name').value.trim();
+    if (!name) {
+      note(dialogFeedback, 'Vul een naam in.', 'error');
+      return;
+    }
+    const payload = {
+      name,
+      contact: document.getElementById('customer-contact').value.trim() || null,
+      email: document.getElementById('customer-email').value.trim() || null,
+      phone: document.getElementById('customer-phone').value.trim() || null
+    };
+    const saveButton = document.getElementById('customer-save');
+    setBusy(saveButton, true, 'Opslaan…');
+    try {
+      if (editingId) {
+        await api('/api/customers/' + editingId, { method: 'PATCH', body: payload });
+      } else {
+        await api('/api/customers', { method: 'POST', body: payload });
+      }
+      closeDialog();
+      await loadData();
+      note(feedback, editingId ? 'Klant bijgewerkt.' : 'Klant opgeslagen.', 'success');
+    } catch (error) {
+      note(dialogFeedback, error.message, 'error');
+    } finally {
+      setBusy(saveButton, false);
+    }
+  });
+
+  tbody.addEventListener('click', async event => {
+    const newTrigger = event.target.closest('[data-action="new"]');
+    if (newTrigger) { openDialog(null); return; }
+
+    const editTrigger = event.target.closest('[data-edit]');
+    if (editTrigger) {
+      const customer = customers.find(item => item.id === Number(editTrigger.dataset.edit));
+      if (customer) openDialog(customer);
+      return;
+    }
+
+    const deleteTrigger = event.target.closest('[data-delete]');
+    if (deleteTrigger) {
+      const customer = customers.find(item => item.id === Number(deleteTrigger.dataset.delete));
+      if (!customer) return;
+      if (!window.confirm('Weet je zeker dat je ' + customer.name + ' wilt verwijderen?')) return;
+      setBusy(deleteTrigger, true, 'Bezig…');
+      try {
+        await api('/api/customers/' + customer.id, { method: 'DELETE' });
+        await loadData();
+        note(feedback, customer.name + ' is verwijderd.', 'success');
+      } catch (error) {
+        note(feedback, error.message, 'error');
+        setBusy(deleteTrigger, false);
+      }
+    }
+  });
+
+  document.getElementById('new-customer').addEventListener('click', () => openDialog(null));
+  document.getElementById('customer-dialog-close').addEventListener('click', closeDialog);
+  document.getElementById('customer-cancel').addEventListener('click', closeDialog);
+  dialog.addEventListener('click', event => {
+    if (event.target === dialog) closeDialog();
+  });
+  searchInput.addEventListener('input', render);
+
+  Kasflow.ready.then(loadData);
+})();
+</script>
+
+</body>
+</html>

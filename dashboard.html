@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Dashboard</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="dashboard">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Bedrijfsoverzicht</h1>
+        <div class="topbar-sub"><span data-user-company>Je bedrijf</span> · <span id="dashboard-date"></span></div>
+      </div>
+      <div class="topbar-actions">
+        <a href="bonnetjes.html" class="btn btn-outline">Bon toevoegen</a>
+        <a href="factuur.html" class="btn btn-primary">+ Nieuwe factuur</a>
+      </div>
+    </div>
+
+    <div id="overdue-alert" hidden></div>
+    <p id="dashboard-feedback" class="form-note" role="status" aria-live="polite"></p>
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-label">Gefactureerde omzet excl. btw</div>
+        <div class="stat-value" id="stat-revenue">—</div>
+        <div class="stat-delta" id="stat-revenue-meta">Dit kalenderjaar</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Openstaand inclusief btw</div>
+        <div class="stat-value" id="stat-outstanding">—</div>
+        <div class="stat-delta" id="stat-outstanding-meta">Nog niet betaalde facturen</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Facturen dit jaar</div>
+        <div class="stat-value" id="stat-invoices">—</div>
+        <div class="stat-delta" id="stat-invoices-meta">Alle statussen</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Klanten</div>
+        <div class="stat-value" id="stat-customers">—</div>
+        <div class="stat-delta">In je klantenbestand</div>
+      </div>
+    </div>
+
+    <div class="panel-grid">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Gefactureerde omzet — laatste 6 maanden</h2>
+          <a href="facturen.html">Alle facturen</a>
+        </div>
+        <div class="chart-wrap" id="revenue-chart" aria-live="polite"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Openstaande facturen</h2>
+          <a href="facturen.html">Alles bekijken</a>
+        </div>
+        <div class="mini-list" id="open-invoices"></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Nieuwste facturen</h2>
+        <a href="facturen.html">Naar facturen</a>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Klant</th><th>Nummer</th><th>Datum</th><th>Status</th><th style="text-align:right">Bedrag</th></tr>
+          </thead>
+          <tbody id="recent-invoices"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, money, formatShortDate, statusOf, statusBadge, note } = Kasflow;
+  const dateToday = new Date();
+  const feedback = document.getElementById('dashboard-feedback');
+  const openInvoicesContainer = document.getElementById('open-invoices');
+  const recentBody = document.getElementById('recent-invoices');
+  const chartContainer = document.getElementById('revenue-chart');
+  const overdueAlert = document.getElementById('overdue-alert');
+
+  document.getElementById('dashboard-date').textContent = new Intl.DateTimeFormat('nl-NL', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+  }).format(dateToday);
+
+  function emptyState(title, copy, actionHref, actionLabel) {
+    return '<div class="empty-state">' +
+      '<div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h5"/></svg></div>' +
+      '<h3>' + title + '</h3><p>' + copy + '</p>' +
+      (actionHref ? '<a class="btn btn-primary btn-sm" href="' + actionHref + '">' + actionLabel + '</a>' : '') +
+      '</div>';
+  }
+
+  function renderRevenueChart(invoices) {
+    const monthTotals = new Map();
+    const months = [];
+    for (let offset = 5; offset >= 0; offset -= 1) {
+      const month = new Date(dateToday.getFullYear(), dateToday.getMonth() - offset, 1);
+      const key = month.getFullYear() + '-' + String(month.getMonth() + 1).padStart(2, '0');
+      months.push({ key, label: new Intl.DateTimeFormat('nl-NL', { month: 'short' }).format(month) });
+      monthTotals.set(key, 0);
+    }
+    invoices.forEach(invoice => {
+      const key = invoice.invoice_date.slice(0, 7);
+      if (monthTotals.has(key)) monthTotals.set(key, monthTotals.get(key) + invoice.subtotal_cents);
+    });
+
+    if ([...monthTotals.values()].every(value => value === 0)) {
+      chartContainer.innerHTML = emptyState(
+        'Nog geen omzet in deze periode',
+        'Maak je eerste factuur aan. Zodra je factureert verschijnt hier je omzet per maand.',
+        'factuur.html',
+        'Nieuwe factuur'
+      );
+      return;
+    }
+
+    const svgNamespace = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNamespace, 'svg');
+    svg.setAttribute('viewBox', '0 0 600 220');
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Gefactureerde omzet per maand, exclusief btw');
+
+    [12, 72, 132, 192].forEach(y => {
+      const line = document.createElementNS(svgNamespace, 'line');
+      line.setAttribute('x1', '0'); line.setAttribute('x2', '600');
+      line.setAttribute('y1', String(y)); line.setAttribute('y2', String(y));
+      line.setAttribute('stroke', '#EEF0F4');
+      svg.append(line);
+    });
+
+    const maxTotal = Math.max(...monthTotals.values(), 1);
+    months.forEach((month, index) => {
+      const total = monthTotals.get(month.key);
+      const height = total === 0 ? 3 : Math.max(8, total / maxTotal * 158);
+      const x = 34 + index * 95;
+      const bar = document.createElementNS(svgNamespace, 'rect');
+      bar.setAttribute('x', String(x)); bar.setAttribute('y', String(196 - height));
+      bar.setAttribute('width', '48'); bar.setAttribute('height', String(height));
+      bar.setAttribute('rx', '7');
+      bar.setAttribute('fill', total ? 'url(#barGradient)' : '#E4E7EC');
+      svg.append(bar);
+
+      if (total) {
+        const value = document.createElementNS(svgNamespace, 'text');
+        value.setAttribute('x', String(x + 24)); value.setAttribute('y', String(180 - height));
+        value.setAttribute('text-anchor', 'middle'); value.setAttribute('fill', '#33415C');
+        value.setAttribute('font-size', '11'); value.setAttribute('font-family', 'Inter, sans-serif');
+        value.textContent = money(total).replace(',00', '');
+        svg.append(value);
+      }
+
+      const label = document.createElementNS(svgNamespace, 'text');
+      label.setAttribute('x', String(x + 24)); label.setAttribute('y', '214');
+      label.setAttribute('text-anchor', 'middle'); label.setAttribute('fill', '#64748B');
+      label.setAttribute('font-size', '11'); label.setAttribute('font-family', 'Inter, sans-serif');
+      label.textContent = month.label;
+      svg.append(label);
+    });
+
+    const defs = document.createElementNS(svgNamespace, 'defs');
+    const gradient = document.createElementNS(svgNamespace, 'linearGradient');
+    gradient.setAttribute('id', 'barGradient');
+    gradient.setAttribute('x1', '0'); gradient.setAttribute('y1', '0');
+    gradient.setAttribute('x2', '0'); gradient.setAttribute('y2', '1');
+    const stopTop = document.createElementNS(svgNamespace, 'stop');
+    stopTop.setAttribute('offset', '0'); stopTop.setAttribute('stop-color', '#34D399');
+    const stopBottom = document.createElementNS(svgNamespace, 'stop');
+    stopBottom.setAttribute('offset', '1'); stopBottom.setAttribute('stop-color', '#0E9F6E');
+    gradient.append(stopTop, stopBottom);
+    defs.append(gradient);
+    svg.prepend(defs);
+
+    chartContainer.replaceChildren(svg);
+  }
+
+  function renderOpenInvoices(invoices, customerNames) {
+    const open = invoices
+      .filter(invoice => statusOf(invoice) !== 'paid')
+      .sort((a, b) => a.due_date.localeCompare(b.due_date))
+      .slice(0, 5);
+
+    if (!open.length) {
+      openInvoicesContainer.innerHTML =
+        '<div class="empty-state">' +
+        '<div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M20 6L9 17l-5-5"/></svg></div>' +
+        '<h3>Alles is betaald</h3><p>Er staan geen facturen open. Netjes.</p>' +
+        '<a class="btn btn-outline btn-sm" href="facturen.html">Bekijk facturen</a></div>';
+      return;
+    }
+
+    openInvoicesContainer.innerHTML = open.map(invoice => {
+      const status = statusOf(invoice);
+      return '<a class="mini-item" href="facturen.html?invoice=' + invoice.id + '">' +
+        '<span class="mini-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h5"/></svg></span>' +
+        '<span class="mini-info"><span class="name">' + Kasflow.escapeHtml(customerNames.get(invoice.customer_id)) + '</span>' +
+        '<span class="meta">' + Kasflow.escapeHtml(invoice.number) + ' · ' + formatShortDate(invoice.due_date) + '</span></span>' +
+        '<span class="mini-side"><span class="mini-amount">' + money(invoice.total_cents) + '</span>' +
+        '<small>' + Kasflow.statusLabel(status) + '</small></span></a>';
+    }).join('');
+  }
+
+  function renderRecentInvoices(invoices, customerNames) {
+    if (!invoices.length) {
+      recentBody.innerHTML = '<tr class="empty-row"><td colspan="5">' +
+        emptyState('Nog geen facturen', 'Je eerste factuur staat in een paar klikken klaar.', 'factuur.html', 'Nieuwe factuur') +
+        '</td></tr>';
+      return;
+    }
+
+    recentBody.innerHTML = invoices.slice(0, 5).map(invoice => {
+      const status = statusOf(invoice);
+      return '<tr>' +
+        '<td data-label="Klant" class="row-name">' + Kasflow.escapeHtml(customerNames.get(invoice.customer_id)) + '</td>' +
+        '<td data-label="Nummer" class="row-sub">' + Kasflow.escapeHtml(invoice.number) + '</td>' +
+        '<td data-label="Datum">' + formatShortDate(invoice.invoice_date) + '</td>' +
+        '<td data-label="Status">' + statusBadge(status) + '</td>' +
+        '<td data-label="Bedrag" class="amount" style="text-align:right">' + money(invoice.total_cents) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  async function loadDashboard() {
+    note(feedback, '');
+    try {
+      const [invoices, customers] = await Promise.all([
+        api('/api/invoices'),
+        api('/api/customers')
+      ]);
+      const customerNames = new Map(customers.map(customer => [customer.id, customer.name]));
+      const year = dateToday.getFullYear();
+      const yearInvoices = invoices.filter(invoice => invoice.invoice_date.startsWith(String(year)));
+      const revenueCents = yearInvoices.reduce((sum, invoice) => sum + invoice.subtotal_cents, 0);
+      const openInvoices = invoices.filter(invoice => statusOf(invoice) !== 'paid');
+      const openCents = openInvoices.reduce((sum, invoice) => sum + invoice.total_cents, 0);
+      const overdue = openInvoices.filter(invoice => statusOf(invoice) === 'overdue');
+
+      document.getElementById('stat-revenue').textContent = money(revenueCents);
+      document.getElementById('stat-revenue-meta').textContent = yearInvoices.length
+        ? 'Over ' + yearInvoices.length + (yearInvoices.length === 1 ? ' factuur' : ' facturen')
+        : 'Nog niets gefactureerd dit jaar';
+      document.getElementById('stat-outstanding').textContent = money(openCents);
+      document.getElementById('stat-outstanding-meta').textContent = openInvoices.length
+        ? openInvoices.length + (openInvoices.length === 1 ? ' openstaande factuur' : ' openstaande facturen')
+        : 'Alles is betaald';
+      document.getElementById('stat-invoices').textContent = String(yearInvoices.length);
+      document.getElementById('stat-invoices-meta').textContent = year + ' · alle statussen';
+      document.getElementById('stat-customers').textContent = String(customers.length);
+
+      if (overdue.length) {
+        const total = overdue.reduce((sum, invoice) => sum + invoice.total_cents, 0);
+        overdueAlert.hidden = false;
+        overdueAlert.className = 'alert warning';
+        overdueAlert.innerHTML = '<div><strong>' + overdue.length + ' factuur' +
+          (overdue.length === 1 ? ' is' : 'en zijn') + ' te laat.</strong> ' +
+          money(total) + ' staat langer open dan de vervaldatum. ' +
+          '<a href="facturen.html?filter=overdue" class="table-link">Bekijk ze</a>.</div>';
+      } else {
+        overdueAlert.hidden = true;
+      }
+
+      renderRevenueChart(invoices);
+      renderOpenInvoices(invoices, customerNames);
+      renderRecentInvoices(invoices, customerNames);
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      document.getElementById('dashboard-date').textContent = 'Gegevens konden niet worden geladen';
+      chartContainer.innerHTML = '<div class="empty-state"><h3>Even niet beschikbaar</h3><p>' + error.message + '</p></div>';
+    }
+  }
+
+  Kasflow.ready.then(loadDashboard);
+})();
+</script>
+
+</body>
+</html>

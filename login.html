@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Kasflow — Inloggen</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body>
+
+<div class="auth-shell">
+  <div class="auth-visual">
+    <a class="logo" href="index.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <div class="auth-quote">
+      &ldquo;Ik zag voor het eerst in jaren precies waar mijn geld naartoe ging — en de btw stond al klaar toen ik aangifte moest doen.&rdquo;
+      <div class="auth-quote-author">Sanne Verhoeven, Studio Veer</div>
+    </div>
+    <div style="font-family:var(--numeric); font-size:0.78rem; color:rgba(255,255,255,0.4);">&copy; 2026 Kasflow B.V.</div>
+  </div>
+
+  <div class="auth-form-wrap">
+    <form class="auth-form" id="login-form" novalidate>
+      <a class="auth-brand" href="index.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+      <h1>Welkom terug</h1>
+      <p class="sub">Log in om je facturen, btw en cijfers te bekijken.</p>
+
+      <div class="field">
+        <label for="email">E-mailadres</label>
+        <input type="email" id="email" name="email" placeholder="jij@bedrijf.nl" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">Wachtwoord</label>
+        <input type="password" id="password" name="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" autocomplete="current-password" required>
+        <div class="field-hint"><a href="reset.html">Wachtwoord vergeten?</a></div>
+      </div>
+
+      <button type="submit" class="auth-submit" id="login-submit">Inloggen</button>
+      <p class="auth-note" id="login-feedback" role="status" aria-live="polite"></p>
+      <p class="auth-alt">Nog geen account? <a href="signup.html">Start gratis</a></p>
+      <p class="auth-foot">Je administratie staat versleuteld op een server in de EU. Door in te loggen ga je akkoord met de <a href="voorwaarden.html">voorwaarden</a> en de <a href="privacy.html">privacyverklaring</a>.</p>
+    </form>
+  </div>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const form = document.getElementById('login-form');
+  const feedback = document.getElementById('login-feedback');
+  const submit = document.getElementById('login-submit');
+  const allowedPages = ['dashboard.html', 'facturen.html', 'factuur.html', 'bonnetjes.html', 'btw.html', 'bank.html', 'klanten.html', 'instellingen.html'];
+
+  function nextPage() {
+    const requested = new URLSearchParams(window.location.search).get('next');
+    return allowedPages.includes(requested) ? requested : 'dashboard.html';
+  }
+
+  fetch('/api/auth/me', { headers: { Accept: 'application/json' } })
+    .then(response => {
+      if (response.ok) window.location.replace(nextPage());
+    })
+    .catch(() => {});
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    Kasflow.note(feedback, '');
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+
+    if (!email || !password) {
+      Kasflow.note(feedback, 'Vul je e-mailadres en wachtwoord in.', 'error');
+      return;
+    }
+
+    Kasflow.setBusy(submit, true, 'Inloggen…');
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        const message = error && error.detail ? error.detail : 'Inloggen is niet gelukt.';
+        if (response.status === 403) {
+          Kasflow.note(feedback, message + ' Vraag een nieuwe link aan of registreer opnieuw.', 'warning');
+          Kasflow.setBusy(submit, false);
+          return;
+        }
+        throw new Error(message);
+      }
+      window.location.replace(nextPage());
+    } catch (error) {
+      Kasflow.note(feedback, error.message, 'error');
+      Kasflow.setBusy(submit, false);
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

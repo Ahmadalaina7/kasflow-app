@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+.venv/
+backend/*.sqlite3
+backend/*.sqlite3-shm
+backend/*.sqlite3-wal
+backend/uploads/
+.env
+.env.*
+!.env.example
+.tmp/
+.freebuff/
