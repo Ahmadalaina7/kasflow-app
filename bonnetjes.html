@@ -69,24 +69,22 @@
             </div>
             <div class="field-row">
               <div>
-                <label class="field-label" for="receipt-amount">Bedrag inclusief btw</label>
+                <label class="field-label" for="receipt-amount" id="receipt-amount-label">Bedrag inclusief btw</label>
                 <input id="receipt-amount" class="field-control" type="number" min="0" step="0.01" placeholder="18,50" required>
               </div>
               <div>
                 <label class="field-label" for="receipt-category">Categorie</label>
-                <select id="receipt-category" class="field-control">
-                  <option>Kantoor</option>
-                  <option>Reiskosten</option>
-                  <option>Representatie</option>
-                  <option>Software</option>
-                  <option>Materiaal</option>
-                  <option>Overig</option>
-                </select>
+                <select id="receipt-category" class="field-control"></select>
               </div>
             </div>
             <div class="field-row">
               <div>
-                <label class="field-label" for="receipt-rate">Btw-tarief op de bon</label>
+                <label class="field-label" for="receipt-origin">Waar komt deze bon vandaan?</label>
+                <select id="receipt-origin" class="field-control"></select>
+                <div class="field-hint" id="origin-hint">Nederlandse btw op de bon trek je af in je aangifte.</div>
+              </div>
+              <div>
+                <label class="field-label" for="receipt-rate">Btw-tarief</label>
                 <select id="receipt-rate" class="field-control">
                   <option value="21">21%</option>
                   <option value="9">9%</option>
@@ -94,10 +92,17 @@
                   <option value="custom">Gemengd of anders</option>
                 </select>
               </div>
+            </div>
+            <div class="field-row">
               <div>
-                <label class="field-label" for="receipt-vat">Btw-bedrag (voorbelasting)</label>
+                <label class="field-label" for="receipt-vat" id="receipt-vat-label">Btw-bedrag (voorbelasting)</label>
                 <input id="receipt-vat" class="field-control" type="number" min="0" step="0.01" placeholder="0,00">
-                <div class="field-hint">Neem het btw-bedrag over van de bon. Je trekt dit af in je btw-aangifte.</div>
+                <div class="field-hint" id="vat-hint">Neem het btw-bedrag over van de bon.</div>
+              </div>
+              <div id="life-years-wrap" hidden>
+                <label class="field-label" for="receipt-life">Afschrijven over (jaren)</label>
+                <input id="receipt-life" class="field-control" type="number" min="5" max="30" value="5">
+                <div class="field-hint">Laptop of inventaris: minimaal 5 jaar.</div>
               </div>
             </div>
             <div class="form-actions">
@@ -139,19 +144,64 @@
   const saveButton = document.getElementById('receipt-save');
   const rateSelect = document.getElementById('receipt-rate');
   const vatInput = document.getElementById('receipt-vat');
+  const originSelect = document.getElementById('receipt-origin');
+  const categorySelect = document.getElementById('receipt-category');
+  const lifeWrap = document.getElementById('life-years-wrap');
   let receipts = [];
+  let categories = [];
+  const ORIGIN_HINTS = {
+    nl: 'Nederlandse btw op de bon trek je af als voorbelasting (rubriek 5b).',
+    none: 'Geen btw, bijvoorbeeld een verzekering of een particuliere verkoper.',
+    reverse_nl: 'De leverancier heeft de btw naar jou verlegd. Je geeft die zelf aan in rubriek 2a en trekt hem af in 5b.',
+    eu: 'Diensten of goederen uit een ander EU-land. Je geeft 21% zelf aan in rubriek 4b en trekt dat af in 5b. Typisch: Google Ireland, Microsoft.',
+    non_eu: 'Diensten van buiten de EU. Je geeft 21% zelf aan in rubriek 4a en trekt dat af in 5b. Typisch: Adobe of AWS in de VS.'
+  };
+
+  function origin() {
+    return originSelect.value || 'nl';
+  }
+
+  function isReverse() {
+    return ['eu', 'non_eu', 'reverse_nl'].includes(origin());
+  }
+
+  function selectedCategory() {
+    return categories.find(item => item.key === categorySelect.value) || null;
+  }
 
   function syncVat() {
+    const source = origin();
+    document.getElementById('origin-hint').textContent = ORIGIN_HINTS[source] || ORIGIN_HINTS.nl;
+    document.getElementById('receipt-amount-label').textContent = isReverse()
+      ? 'Bedrag zonder Nederlandse btw (wat je betaalde)'
+      : 'Bedrag inclusief btw';
+    const category = selectedCategory();
+    lifeWrap.hidden = !(category && category.asset);
+    if (source === 'none') {
+      rateSelect.value = '0';
+      rateSelect.disabled = true;
+      vatInput.value = '0.00';
+      vatInput.readOnly = true;
+      return;
+    }
+    rateSelect.disabled = false;
+    if (isReverse() && rateSelect.value === '0') rateSelect.value = '21';
     const rate = rateSelect.value;
     vatInput.readOnly = rate !== 'custom';
     if (rate === 'custom') return;
     const cents = Math.round(Number(amountInput.value || 0) * 100);
-    const vatCents = Math.round(cents * Number(rate) / (100 + Number(rate)));
+    const vatCents = isReverse()
+      ? Math.round(cents * Number(rate) / 100)
+      : Math.round(cents * Number(rate) / (100 + Number(rate)));
     vatInput.value = cents ? (vatCents / 100).toFixed(2) : '';
+    document.getElementById('vat-hint').textContent = isReverse()
+      ? 'Dit bedrag komt in je aangifte (verlegd) en als voorbelasting.'
+      : 'Neem het btw-bedrag over van de bon.';
   }
   amountInput.addEventListener('input', syncVat);
   rateSelect.addEventListener('change', syncVat);
-  syncVat();
+  originSelect.addEventListener('change', syncVat);
+  categorySelect.addEventListener('change', syncVat);
 
   dateInput.value = todayIso();
 
@@ -182,9 +232,10 @@
         '<div class="receipt-vendor">' + escapeHtml(receipt.vendor) + '</div>' +
         '<div class="receipt-meta">' + formatShortDate(receipt.receipt_date) + '</div>' +
         '<div class="receipt-amount">' + money(receipt.amount_cents) + '</div>' +
-        '<div class="receipt-meta">waarvan btw ' + money(receipt.vat_cents || 0) + '</div>' +
+        '<div class="receipt-meta">waarvan btw ' + money(receipt.vat_cents || 0) +
+        (receipt.vat_origin && receipt.vat_origin !== 'nl' ? ' · verlegd' : '') + '</div>' +
         '<div class="receipt-foot">' +
-        '<span class="receipt-tag">' + escapeHtml(receipt.category) + '</span>' +
+        '<span class="receipt-tag">' + escapeHtml(receipt.category_label || receipt.category) + '</span>' +
         '<button type="button" class="btn btn-danger btn-sm" data-delete="' + receipt.id + '">Verwijderen</button>' +
         '</div></div></article>';
     }).join('');
@@ -285,7 +336,11 @@
       return;
     }
     const vatAmount = vatInput.value === '' ? '0' : vatInput.value;
-    if (Number(vatAmount) < 0 || Number(vatAmount) > Number(amount)) {
+    if (Number(vatAmount) < 0) {
+      note(feedback, 'Het btw-bedrag kan niet negatief zijn.', 'error');
+      return;
+    }
+    if (!isReverse() && Number(vatAmount) > Number(amount)) {
       note(feedback, 'Het btw-bedrag moet tussen 0 en het totaalbedrag liggen.', 'error');
       return;
     }
@@ -295,7 +350,11 @@
     payload.append('receipt_date', dateInput.value);
     payload.append('amount', amount);
     payload.append('vat_amount', vatAmount);
-    payload.append('category', document.getElementById('receipt-category').value);
+    payload.append('vat_origin', origin());
+    payload.append('category', categorySelect.value);
+    if (selectedCategory() && selectedCategory().asset) {
+      payload.append('life_years', document.getElementById('receipt-life').value || '5');
+    }
     payload.append('file', file);
 
     setBusy(saveButton, true, 'Uploaden…');
@@ -304,6 +363,7 @@
       form.reset();
       setFile(null);
       dateInput.value = todayIso();
+      originSelect.value = 'nl';
       syncVat();
       await loadReceipts();
       note(feedback, 'Bon opgeslagen.', 'success');
@@ -340,7 +400,24 @@
     window.setTimeout(() => fileInput.click(), 260);
   });
 
-  Kasflow.ready.then(loadReceipts);
+  async function setupForm() {
+    try {
+      const meta = await api('/api/meta/bookkeeping');
+      categories = meta.categories || [];
+      categorySelect.innerHTML = categories.map(item =>
+        '<option value="' + escapeHtml(item.key) + '">' + escapeHtml(item.label) + '</option>'
+      ).join('');
+      originSelect.innerHTML = (meta.vat_origins || []).map(item =>
+        '<option value="' + escapeHtml(item.key) + '">' + escapeHtml(item.label) + '</option>'
+      ).join('');
+      originSelect.value = 'nl';
+      syncVat();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    }
+  }
+
+  Kasflow.ready.then(() => Promise.all([setupForm(), loadReceipts()]));
 })();
 </script>
 

@@ -13,7 +13,8 @@ Cloud86-mailbox voor de uitgaande e-mail.
 
 > **Cloud86 shared hosting kan Kasflow niet draaien.** Hun webhostingpakketten
 > zijn PHP-only: je kunt er geen Python-proces, `uvicorn` of PostgreSQL
-> draaien. Gebruik een Cloud86 **VPS** (met Docker) of een andere EU-server. De
+> draaien. Gebruik een Cloud86 **VPS** (met Docker), **Plesk met Python 3.11+
+> en PostgreSQL** ([PLESK.md](PLESK.md)), of een andere EU-server. De
 > Cloud86-mailbox gebruik je wél: e-mail versturen gaat via SMTP vanaf elke host.
 
 ## 0. Overzicht

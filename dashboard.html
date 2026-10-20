@@ -55,9 +55,9 @@
         <div class="stat-delta" id="stat-invoices-meta">Alle statussen</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Klanten</div>
-        <div class="stat-value" id="stat-customers">—</div>
-        <div class="stat-delta">In je klantenbestand</div>
+        <div class="stat-label">Zet maandelijks opzij</div>
+        <div class="stat-value" id="stat-reserve">—</div>
+        <div class="stat-delta" id="stat-reserve-meta">Inkomstenbelasting + Zvw</div>
       </div>
     </div>
 
@@ -254,9 +254,10 @@
   async function loadDashboard() {
     note(feedback, '');
     try {
-      const [invoices, customers] = await Promise.all([
+      const [invoices, customers, yearOverview] = await Promise.all([
         api('/api/invoices'),
-        api('/api/customers')
+        api('/api/customers'),
+        api('/api/year')
       ]);
       const customerNames = new Map(customers.map(customer => [customer.id, customer.name]));
       const year = dateToday.getFullYear();
@@ -276,7 +277,10 @@
         : 'Alles is betaald';
       document.getElementById('stat-invoices').textContent = String(yearInvoices.length);
       document.getElementById('stat-invoices-meta').textContent = year + ' · alle statussen';
-      document.getElementById('stat-customers').textContent = String(customers.length);
+      document.getElementById('stat-reserve').textContent = money(yearOverview.monthly_reserve_cents);
+      document.getElementById('stat-reserve-meta').textContent = yearOverview.hours_met
+        ? 'Winst ' + money(yearOverview.profit_cents) + ' · urencriterium gehaald'
+        : 'Winst ' + money(yearOverview.profit_cents) + ' · nog uren bijhouden';
 
       if (overdue.length) {
         const total = overdue.reduce((sum, invoice) => sum + invoice.total_cents, 0);

@@ -13,6 +13,9 @@
       '<path d="M16 19v-1a4 4 0 00-8 0v1"/><circle cx="12" cy="8" r="4"/><path d="M20 19v-1a3 3 0 00-2-2.8"/>',
     instellingen:
       '<circle cx="12" cy="12" r="3"/><path d="M4 12h2m12 0h2M12 4v2m0 12v2M6.3 6.3l1.4 1.4m8.6 8.6l1.4 1.4M6.3 17.7l1.4-1.4m8.6-8.6l1.4-1.4"/>',
+    uren: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    jaaroverzicht:
+      '<path d="M4 19V5m0 14h16"/><path d="M8 15l3-4 2 2 4-6"/>',
   };
 
   const NAV = [
@@ -21,6 +24,8 @@
     { id: 'bonnetjes', href: 'bonnetjes.html', label: 'Bonnetjes', tab: true },
     { id: 'btw', href: 'btw.html', label: 'BTW', fullLabel: 'BTW & aangifte', tab: true },
     { id: 'bank', href: 'bank.html', label: 'Bank' },
+    { id: 'uren', href: 'uren.html', label: 'Uren', fullLabel: 'Uren & kilometers' },
+    { id: 'jaaroverzicht', href: 'jaaroverzicht.html', label: 'Jaar' },
     { id: 'klanten', href: 'klanten.html', label: 'Klanten' },
     { id: 'instellingen', href: 'instellingen.html', label: 'Instellingen' },
   ];
@@ -122,7 +127,7 @@
     sheet.setAttribute('aria-label', 'Meer navigatie');
     sheet.hidden = true;
 
-    const moreActive = ['bank', 'klanten', 'instellingen'].includes(currentPage);
+    const moreActive = ['bank', 'uren', 'jaaroverzicht', 'klanten', 'instellingen'].includes(currentPage);
     const moreToggle = () => document.getElementById('more-toggle');
 
     const openSheet = () => {

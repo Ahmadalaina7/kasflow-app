@@ -16,6 +16,16 @@ BASE_DIR = Path(__file__).resolve().parent
 WEB_ROOT = BASE_DIR.parent
 DEFAULT_DATABASE_URL = f"sqlite:///{(BASE_DIR / 'kasflow.sqlite3').as_posix()}"
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional in the test image
+    load_dotenv = None
+
+if load_dotenv is not None:
+    # Existing environment variables win, so Docker Compose and systemd stay in charge.
+    load_dotenv(WEB_ROOT / ".env")
+    load_dotenv(BASE_DIR / ".env")
+
 
 @dataclass(frozen=True)
 class Settings:

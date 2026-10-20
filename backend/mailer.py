@@ -281,3 +281,33 @@ class Mailer:
             html=_html_body(f"{document} {invoice_number}", paragraphs, None, signature),
             attachments=[(pdf_filename, "application/pdf", pdf_bytes)],
         )
+
+    def send_reminder(
+        self,
+        *,
+        sender_name: str,
+        customer_name: str,
+        customer_email: str,
+        invoice_number: str,
+        total_cents: int,
+        due_date: str,
+        pdf_bytes: bytes,
+        pdf_filename: str,
+    ) -> bool:
+        paragraphs = [
+            f"Hallo {customer_name},",
+            f"Een vriendelijke herinnering: factuur {invoice_number} van {sender_name} "
+            f"({money(total_cents)} inclusief btw) was te betalen vóór {due_date}.",
+            "In de bijlage staat de factuur nog een keer. Is de betaling onderweg? Dan kun je dit bericht negeren.",
+        ]
+        signature = [
+            f"Deze herinnering is verstuurd via Kasflow namens {sender_name}.",
+            "Vragen over deze factuur? Antwoord dan direct op deze e-mail.",
+        ]
+        return self.send(
+            to=customer_email,
+            subject=f"Herinnering: factuur {invoice_number} van {sender_name}",
+            text=_text_body(paragraphs, signature),
+            html=_html_body(f"Herinnering factuur {invoice_number}", paragraphs, None, signature),
+            attachments=[(pdf_filename, "application/pdf", pdf_bytes)],
+        )

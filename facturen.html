@@ -99,6 +99,7 @@
     <button type="button" class="btn btn-outline" id="detail-close">Sluiten</button>
     <a class="btn btn-outline" id="detail-pdf" href="#">Download PDF</a>
     <button type="button" class="btn btn-outline" id="detail-credit">Crediteren</button>
+    <button type="button" class="btn btn-outline" id="detail-remind">Herinnering sturen</button>
     <button type="button" class="btn btn-outline" id="detail-send">Verstuur per e-mail</button>
     <button type="button" class="btn btn-primary" id="detail-status-button">Markeer als betaald</button>
   </div>
@@ -230,6 +231,11 @@
     document.getElementById('detail-subtotal').textContent = money(invoice.subtotal_cents);
     document.getElementById('detail-vat').textContent = money(invoice.vat_cents);
     document.getElementById('detail-total').textContent = money(invoice.total_cents);
+    const remindButton = document.getElementById('detail-remind');
+    remindButton.hidden = isCredit || invoice.status === 'credited' || invoice.status === 'paid';
+    remindButton.textContent = invoice.reminder_count
+      ? 'Opnieuw herinneren (' + invoice.reminder_count + ')'
+      : 'Herinnering sturen';
     document.getElementById('detail-credit').hidden = isCredit || invoice.status === 'credited';
     const statusButton = document.getElementById('detail-status-button');
     statusButton.hidden = invoice.status === 'credited';
@@ -380,7 +386,32 @@
   document.getElementById('invoice-dialog-close').addEventListener('click', closeDialog);
   document.getElementById('detail-close').addEventListener('click', closeDialog);
   document.getElementById('detail-status-button').addEventListener('click', toggleInvoiceStatus);
+  async function remindInvoice() {
+    if (!activeInvoice) return;
+    const button = document.getElementById('detail-remind');
+    const name = customerNames.get(activeInvoice.customer_id) || 'deze klant';
+    if (!window.confirm('Herinnering voor factuur ' + activeInvoice.number + ' naar ' + name + ' sturen?')) return;
+    setBusy(button, true, 'Versturen…');
+    try {
+      const result = await api('/api/invoices/' + activeInvoice.id + '/remind', { method: 'POST', body: {} });
+      const updated = await api('/api/invoices/' + activeInvoice.id);
+      invoices = invoices.map(invoice => invoice.id === updated.id ? updated : invoice);
+      activeInvoice = updated;
+      openInvoice(updated.id);
+      delete button.dataset.originalLabel;
+      note(document.getElementById('detail-feedback'), result.mode === 'smtp'
+        ? 'Herinnering verstuurd naar ' + result.to + '.'
+        : 'Herinnering opgebouwd in logmodus voor ' + result.to + '.',
+        result.mode === 'smtp' ? 'success' : 'warning');
+    } catch (error) {
+      note(document.getElementById('detail-feedback'), error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
   document.getElementById('detail-send').addEventListener('click', sendInvoice);
+  document.getElementById('detail-remind').addEventListener('click', remindInvoice);
   document.getElementById('detail-credit').addEventListener('click', creditInvoice);
   dialog.addEventListener('click', event => {
     if (event.target === dialog) closeDialog();

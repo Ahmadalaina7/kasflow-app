@@ -551,6 +551,198 @@ def test_vat_treatments_need_the_right_data_and_land_in_the_right_rubric(tmp_pat
     assert b"Btw verlegd" in pdf and b"NL000099998B57" in pdf
 
 
+def test_foreign_purchases_fill_vat_rubrics_2a_4a_4b_and_icp(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    german = client.post(
+        "/api/customers",
+        json={
+            "name": "GmbH",
+            "street": "Hauptstr. 1",
+            "postal_code": "10115",
+            "city": "Berlin",
+            "country": "Duitsland",
+            "vat_number": "DE123456789",
+        },
+    ).json()
+    today = date.today()
+    assert client.post(
+        "/api/invoices",
+        json=invoice_payload(german["id"], "EU-1", today, "0", vat_treatment="intra_eu"),
+    ).status_code == 201
+
+    png = ("bon.png", b"\x89PNG\r\n", "image/png")
+    google = client.post(
+        "/api/receipts",
+        data={
+            "vendor": "Google Ireland",
+            "receipt_date": today.isoformat(),
+            "amount": "10.00",
+            "vat_origin": "eu",
+            "category": "software",
+        },
+        files={"file": png},
+    )
+    assert google.status_code == 201, google.text
+    assert google.json()["vat_cents"] == 210
+    adobe = client.post(
+        "/api/receipts",
+        data={
+            "vendor": "Adobe",
+            "receipt_date": today.isoformat(),
+            "amount": "20.00",
+            "vat_origin": "non_eu",
+            "category": "software",
+        },
+        files={"file": png},
+    )
+    assert adobe.status_code == 201 and adobe.json()["vat_cents"] == 420
+    builder = client.post(
+        "/api/receipts",
+        data={
+            "vendor": "Aannemer",
+            "receipt_date": today.isoformat(),
+            "amount": "100.00",
+            "vat_origin": "reverse_nl",
+            "category": "huisvesting",
+        },
+        files={"file": png},
+    )
+    assert builder.status_code == 201 and builder.json()["vat_cents"] == 2100
+    lunch = client.post(
+        "/api/receipts",
+        data={
+            "vendor": "Cafe",
+            "receipt_date": today.isoformat(),
+            "amount": "12.10",
+            "vat_amount": "2.10",
+            "vat_origin": "nl",
+            "category": "horeca",
+        },
+        files={"file": png},
+    )
+    assert lunch.status_code == 201
+    assert lunch.json()["deductible_vat_cents"] == 0
+
+    current = client.get("/api/vat").json()["current"]
+    form = {line["code"]: line for line in current["form"]}
+    assert form["3b"]["base_euros"] == 100
+    assert form["4b"]["base_euros"] == 10 and form["4b"]["vat_euros"] == 2
+    assert form["4a"]["base_euros"] == 20 and form["4a"]["vat_euros"] == 4
+    assert form["2a"]["base_euros"] == 100 and form["2a"]["vat_euros"] == 21
+    # Sales VAT 0 + reverse-charge 2+4+21, minus deductible 2+4+21 (not the cafe).
+    assert current["reverse_charge_vat_cents"] == 2730
+    assert current["input_vat_cents"] == 2730
+    assert current["payable_cents"] == 0
+    assert current["icp"][0]["vat_number"] == "DE123456789"
+    assert current["icp"][0]["net_cents"] == 10000
+
+
+def test_bank_statement_matches_an_invoice_and_can_be_classified(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    customer = create_customer(client)
+    invoice = create_invoice(client, customer["id"], "2026-001")
+    csv_text = (
+        "Datum,Naam / Omschrijving,Rekening,Tegenrekening,Af Bij,Bedrag (EUR),Mededelingen\n"
+        "20-10-2026,Studio Veer,NL00INGB000,NL11RABO012,Bij,242.00,Factuur 2026-001\n"
+        "21-10-2026,Jumbo,NL00INGB000,,Af,18.50,Boodschappen\n"
+    )
+    imported = client.post(
+        "/api/bank/import",
+        files={"file": ("afschrift.csv", csv_text.encode("utf-8"), "text/csv")},
+    )
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["imported"] == 2
+    assert imported.json()["matched"] == 1
+    again = client.post(
+        "/api/bank/import",
+        files={"file": ("afschrift.csv", csv_text.encode("utf-8"), "text/csv")},
+    )
+    assert again.json()["imported"] == 0 and again.json()["duplicates"] == 2
+
+    rows = client.get("/api/bank/transactions").json()
+    by_amount = {row["amount_cents"]: row for row in rows}
+    payment = by_amount[24200]
+    grocery = by_amount[-1850]
+    assert payment["status"] == "invoice" and payment["invoice_id"] == invoice["id"]
+    assert client.get(f"/api/invoices/{invoice['id']}").json()["status"] == "paid"
+    assert grocery["status"] == "open"
+
+    private = client.post(
+        f"/api/bank/transactions/{grocery['id']}", json={"action": "private"}
+    )
+    assert private.status_code == 200 and private.json()["status"] == "private"
+
+    reminder = client.post(f"/api/invoices/{invoice['id']}/remind")
+    assert reminder.status_code == 409
+
+
+def test_year_overview_applies_costs_mileage_and_hours(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    customer = create_customer(client)
+    create_invoice(client, customer["id"], "2026-010")
+    png = ("bon.png", b"\x89PNG\r\n", "image/png")
+    office = client.post(
+        "/api/receipts",
+        data={
+            "vendor": "Office",
+            "receipt_date": date.today().isoformat(),
+            "amount": "121.00",
+            "vat_amount": "21.00",
+            "vat_origin": "nl",
+            "category": "kantoor",
+        },
+        files={"file": png},
+    )
+    assert office.status_code == 201, office.text
+    lunch = client.post(
+        "/api/receipts",
+        data={
+            "vendor": "Cafe",
+            "receipt_date": date.today().isoformat(),
+            "amount": "12.10",
+            "vat_amount": "2.10",
+            "vat_origin": "nl",
+            "category": "horeca",
+        },
+        files={"file": png},
+    )
+    assert lunch.status_code == 201
+    hours = client.post(
+        "/api/hours",
+        json={"entry_date": date.today().isoformat(), "hours": "8", "description": "Klantwerk"},
+    )
+    assert hours.status_code == 201 and hours.json()["minutes"] == 480
+    trip = client.post(
+        "/api/trips",
+        json={
+            "trip_date": date.today().isoformat(),
+            "kilometers": "10",
+            "origin": "Utrecht",
+            "destination": "Amsterdam",
+            "purpose": "Klantbezoek",
+        },
+    )
+    assert trip.status_code == 201
+
+    overview = client.get("/api/year").json()
+    assert overview["revenue_cents"] == 20000
+    assert overview["costs_cents"] == 10000 + 968
+    assert overview["mileage_cents"] == 230
+    assert overview["profit_cents"] == 20000 - 10968 - 230
+    assert overview["hours_minutes"] == 480
+    assert overview["hours_met"] is False
+    assert overview["self_employed_deduction"] == 0
+    vat = client.get("/api/vat").json()["current"]
+    labels = [check["label"] for check in vat["checks"]]
+    assert any("bankafschrift" in label.lower() for label in labels)
+
+    assert client.delete(f"/api/hours/{hours.json()['id']}").status_code == 204
+    assert client.delete(f"/api/trips/{trip.json()['id']}").status_code == 204
+
+
 def test_kor_invoices_carry_the_exemption_and_skip_vat(tmp_path):
     client = client_for(tmp_path)
     register(client)

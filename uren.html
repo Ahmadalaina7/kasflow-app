@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Uren &amp; kilometers</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="uren">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Uren &amp; kilometers</h1>
+        <div class="topbar-sub" id="hours-summary">Bijhouden voor de zelfstandigenaftrek en je kilometerkosten.</div>
+      </div>
+      <div class="topbar-actions">
+        <a href="jaaroverzicht.html" class="btn btn-outline">Naar jaaroverzicht</a>
+      </div>
+    </div>
+
+    <div class="alert">
+      <div><strong>Urencriterium: 1.225 uur per jaar.</strong> Haal je dat, dan krijg je de zelfstandigenaftrek
+      (en als starter de startersaftrek). Woon-werkverkeer telt als zakelijke kilometers. Bewaar deze lijst
+      zeven jaar, net als de rest van je administratie.</div>
+    </div>
+    <p id="hours-feedback" class="form-note" role="status" aria-live="polite"></p>
+
+    <div class="metric-grid">
+      <div class="metric-card accent">
+        <div class="metric-label">Uren dit jaar</div>
+        <div class="metric-value" id="hours-total">—</div>
+        <div class="metric-meta" id="hours-meta">van 1.225</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Kilometers dit jaar</div>
+        <div class="metric-value" id="km-total">—</div>
+        <div class="metric-meta" id="km-meta">forfaitaire aftrek</div>
+      </div>
+    </div>
+
+    <div class="panel-grid">
+      <section class="panel">
+        <div class="panel-head"><h2>Uren bijschrijven</h2></div>
+        <form id="hours-form">
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="hours-date">Datum</label>
+              <input id="hours-date" class="field-control" type="date" required>
+            </div>
+            <div>
+              <label class="field-label" for="hours-amount">Uren</label>
+              <input id="hours-amount" class="field-control" type="number" min="0.25" max="24" step="0.25" placeholder="8" required>
+            </div>
+          </div>
+          <div class="field-group" style="margin-top:12px">
+            <label class="field-label" for="hours-description">Waar heb je aan gewerkt?</label>
+            <input id="hours-description" class="field-control" type="text" maxlength="300" placeholder="Offerte ACME, administratie, acquisitie" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="hours-save">Uren opslaan</button>
+          </div>
+        </form>
+        <div class="table-wrap" style="margin-top:20px">
+          <table class="data-table">
+            <thead><tr><th>Datum</th><th>Uren</th><th>Werk</th><th></th></tr></thead>
+            <tbody id="hours-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Zakelijke rit</h2></div>
+        <form id="trip-form">
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="trip-date">Datum</label>
+              <input id="trip-date" class="field-control" type="date" required>
+            </div>
+            <div>
+              <label class="field-label" for="trip-km">Kilometers</label>
+              <input id="trip-km" class="field-control" type="number" min="0.1" max="5000" step="0.1" placeholder="24" required>
+            </div>
+          </div>
+          <div class="field-row" style="margin-top:12px">
+            <div>
+              <label class="field-label" for="trip-from">Van</label>
+              <input id="trip-from" class="field-control" type="text" maxlength="160" placeholder="Utrecht" required>
+            </div>
+            <div>
+              <label class="field-label" for="trip-to">Naar</label>
+              <input id="trip-to" class="field-control" type="text" maxlength="160" placeholder="Amsterdam" required>
+            </div>
+          </div>
+          <div class="field-group" style="margin-top:12px">
+            <label class="field-label" for="trip-purpose">Aanleiding</label>
+            <input id="trip-purpose" class="field-control" type="text" maxlength="300" placeholder="Klantbezoek, woon-werk" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="trip-save">Rit opslaan</button>
+          </div>
+        </form>
+        <div class="table-wrap" style="margin-top:20px">
+          <table class="data-table">
+            <thead><tr><th>Datum</th><th>Rit</th><th>Km</th><th></th></tr></thead>
+            <tbody id="trip-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { api, money, formatShortDate, note, escapeHtml, setBusy, todayIso } = Kasflow;
+  const year = new Date().getFullYear();
+  const feedback = document.getElementById('hours-feedback');
+  let entries = [];
+  let trips = [];
+
+  document.getElementById('hours-date').value = todayIso();
+  document.getElementById('trip-date').value = todayIso();
+
+  function hoursLabel(minutes) {
+    return (minutes / 60).toLocaleString('nl-NL', { maximumFractionDigits: 2 });
+  }
+
+  function render() {
+    const minutes = entries.reduce((sum, item) => sum + item.minutes, 0);
+    const km = trips.reduce((sum, item) => sum + Number(item.kilometers), 0);
+    document.getElementById('hours-total').textContent = hoursLabel(minutes);
+    document.getElementById('hours-meta').textContent = minutes >= 1225 * 60
+      ? 'Urencriterium gehaald'
+      : hoursLabel(Math.max(0, 1225 * 60 - minutes)) + ' uur te gaan tot 1.225';
+    document.getElementById('km-total').textContent = km.toLocaleString('nl-NL', { maximumFractionDigits: 1 });
+    document.getElementById('km-meta').textContent = money(Math.round(km * 23)) + ' aftrek (23 cent per km)';
+    document.getElementById('hours-summary').textContent = hoursLabel(minutes) + ' uur en ' +
+      km.toLocaleString('nl-NL', { maximumFractionDigits: 1 }) + ' km in ' + year + '.';
+
+    document.getElementById('hours-body').innerHTML = entries.length ? entries.map(item =>
+      '<tr><td data-label="Datum">' + formatShortDate(item.entry_date) + '</td>' +
+      '<td data-label="Uren" class="amount">' + escapeHtml(String(item.hours)) + '</td>' +
+      '<td data-label="Werk">' + escapeHtml(item.description) + '</td>' +
+      '<td class="cell-actions"><button type="button" class="btn btn-danger btn-sm" data-del-hours="' + item.id + '">Verwijderen</button></td></tr>'
+    ).join('') : '<tr class="empty-row"><td colspan="4">Nog geen uren dit jaar.</td></tr>';
+
+    document.getElementById('trip-body').innerHTML = trips.length ? trips.map(item =>
+      '<tr><td data-label="Datum">' + formatShortDate(item.trip_date) + '</td>' +
+      '<td data-label="Rit">' + escapeHtml(item.origin) + ' → ' + escapeHtml(item.destination) +
+      '<div class="row-sub">' + escapeHtml(item.purpose) + '</div></td>' +
+      '<td data-label="Km" class="amount">' + Number(item.kilometers).toLocaleString('nl-NL') + '</td>' +
+      '<td class="cell-actions"><button type="button" class="btn btn-danger btn-sm" data-del-trip="' + item.id + '">Verwijderen</button></td></tr>'
+    ).join('') : '<tr class="empty-row"><td colspan="4">Nog geen ritten dit jaar.</td></tr>';
+  }
+
+  async function load() {
+    try {
+      const [hourData, tripData] = await Promise.all([
+        api('/api/hours?year=' + year),
+        api('/api/trips?year=' + year)
+      ]);
+      entries = hourData;
+      trips = tripData;
+      render();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    }
+  }
+
+  document.getElementById('hours-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = document.getElementById('hours-save');
+    setBusy(button, true, 'Opslaan…');
+    try {
+      await api('/api/hours', {
+        method: 'POST',
+        body: {
+          entry_date: document.getElementById('hours-date').value,
+          hours: document.getElementById('hours-amount').value,
+          description: document.getElementById('hours-description').value
+        }
+      });
+      document.getElementById('hours-description').value = '';
+      document.getElementById('hours-amount').value = '';
+      note(feedback, 'Uren opgeslagen.', 'success');
+      await load();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  });
+
+  document.getElementById('trip-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = document.getElementById('trip-save');
+    setBusy(button, true, 'Opslaan…');
+    try {
+      await api('/api/trips', {
+        method: 'POST',
+        body: {
+          trip_date: document.getElementById('trip-date').value,
+          kilometers: document.getElementById('trip-km').value,
+          origin: document.getElementById('trip-from').value,
+          destination: document.getElementById('trip-to').value,
+          purpose: document.getElementById('trip-purpose').value
+        }
+      });
+      document.getElementById('trip-purpose').value = '';
+      document.getElementById('trip-km').value = '';
+      note(feedback, 'Rit opgeslagen.', 'success');
+      await load();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  });
+
+  document.body.addEventListener('click', async event => {
+    const hoursBtn = event.target.closest('[data-del-hours]');
+    const tripBtn = event.target.closest('[data-del-trip]');
+    try {
+      if (hoursBtn) {
+        await api('/api/hours/' + hoursBtn.dataset.delHours, { method: 'DELETE' });
+        note(feedback, 'Urenregel verwijderd.', 'success');
+        await load();
+      }
+      if (tripBtn) {
+        await api('/api/trips/' + tripBtn.dataset.delTrip, { method: 'DELETE' });
+        note(feedback, 'Rit verwijderd.', 'success');
+        await load();
+      }
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    }
+  });
+
+  Kasflow.ready.then(load);
+})();
+</script>
+</body>
+</html>

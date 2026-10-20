@@ -60,12 +60,18 @@ verwijderen van een account en de migratie van een oud databaseschema.
   verplichte tekst op de factuur.
 - **Klanten** — toevoegen, bewerken, verwijderen (geblokkeerd zolang er facturen
   zijn), adres, land en btw-nummer voor op de factuur, openstaand bedrag per klant.
-- **Bonnetjes** — uploaden (JPG/PNG/WEBP/PDF) met btw-bedrag (voorbelasting),
-  bekijken, verwijderen.
-- **Btw & aangifte** — per kwartaal ingedeeld naar de rubrieken van de aangifte
-  (1a, 1b, 1e, 3a, 3b, 5a, 5b), met voorbelasting en het te betalen of terug te
-  vragen saldo. Een kwartaal vink je af nadat het voorbij is en je aangifte hebt
-  gedaan; daarna zijn facturen en bonnen in dat kwartaal vergrendeld.
+- **Bonnetjes** — uploaden (JPG/PNG/WEBP/PDF) met btw-bedrag, inclusief btw die
+  naar jou is verlegd (Google, EU-leveranciers, rubriek 2a/4a/4b).
+- **Btw & aangifte** — de kwartaalaangifte omzetbelasting in hele euro's, met
+  rubrieken 1a t/m 5c, voorbelasting, verlegde btw op inkopen en de opgaaf ICP
+  bij intra-EU omzet. Je neemt de bedragen over in Mijn Belastingdienst Zakelijk.
+- **Bank** — CAMT.053 of CSV-afschrift importeren, betalingen koppelen aan
+  facturen, privé-uitgaven apart zetten.
+- **Uren & kilometers** — registratie voor het urencriterium (1.225 uur) en
+  de forfaitaire kilometeraftrek.
+- **Jaaroverzicht** — winst-en-verlies, afschrijvingen, investeringsaftrek,
+  zelfstandigenaftrek, mkb-winstvrijstelling en een schatting van inkomstenbelasting
+  plus Zvw, met wat je maandelijks opzij zet.
 - **Instellingen** — bedrijfsgegevens, adres, IBAN, betalingstermijn,
   factuurvoorvoegsel, meldingsvoorkeuren, wachtwoord, recente activiteit,
   volledige gegevensexport en accountverwijdering.
@@ -108,9 +114,11 @@ met SQLite: dat zijn de fouten die anders stil tot datalekken leiden.
 
 ## Naar productie
 
-Zie [DEPLOY.md](DEPLOY.md) voor de volledige stapsgewijze gids: VPS met Docker,
-PostgreSQL, Caddy voor automatische HTTPS, e-mail via Cloud86, back-ups met
-`pg_dump` en de herstelprocedure. In het kort:
+- **Plesk:** [PLESK.md](PLESK.md) — nginx-proxy + gunicorn, PostgreSQL in Plesk,
+  Let's Encrypt, back-ups.
+- **VPS met Docker:** [DEPLOY.md](DEPLOY.md) — Compose, Caddy, `pg_dump`.
+
+In het kort met Docker:
 
 ```bash
 cp .env.example .env   # vul sleutels, domein en SMTP in
@@ -136,13 +144,16 @@ factuur.html               nieuwe factuur met regels, leverdatum en opmerking
 klanten.html               klanten met adres en openstaand bedrag
 bonnetjes.html             bonnetjes uploaden en bekijken
 btw.html                   btw per kwartaal met goedkeuring
-bank.html                  eerlijke lege staat: PSD2-koppeling vereist
+bank.html                  bankafschrift importeren en koppelen
+uren.html                  uren en kilometers
+jaaroverzicht.html         winst en schatting inkomstenbelasting
 instellingen.html          bedrijfsgegevens, beveiliging, export, verwijderen
 login.html / signup.html   inloggen en registreren (met voorwaarden)
 verify.html / reset.html   e-mail bevestigen en wachtwoord resetten
 privacy.html / voorwaarden.html / verwerkersovereenkomst.html   juridische pagina's
 manifest.webmanifest       app-manifest voor installatie op een telefoon
-Dockerfile / docker-compose.yml / Caddyfile / DEPLOY.md          productie
+Dockerfile / docker-compose.yml / Caddyfile / DEPLOY.md / PLESK.md   productie
+passenger_wsgi.py / plesk/       Plesk (Passenger-fallback en systemd)
 backend/app.py             FastAPI-app: modellen, auth, facturen, btw, bonnen, AVG
 backend/config.py          omgevingsconfiguratie met productievalidatie
 backend/migrations.py      idempotente migraties voor SQLite en PostgreSQL
@@ -170,14 +181,16 @@ een nieuwe lettertypefamilie toe te voegen.
 
 ## Grenzen en volgende stappen
 
-- **Aangifte**: het btw-overzicht volgt het factuurstelsel (factuurdatum) en
-  bevat geen naar jou verlegde btw (rubriek 2a/4), privégebruik of suppleties.
-  Het dient niet zelf in bij de Belastingdienst; direct indienen vraagt een
+- **Aangifte**: het btw-overzicht volgt het factuurstelsel (factuurdatum).
+  Privégebruik (1d) en suppleties vul je zelf in als die voorkomen. Kasflow
+  dient niet zelf in bij de Belastingdienst; direct indienen vraagt een
   SBR/Digipoort-certificaat.
 - **Gedeeltelijk crediteren** kan niet: crediteer volledig en maak een nieuwe
   factuur.
-- **Bankkoppeling**: er is geen PSD2-koppeling. De bankpagina zegt dat eerlijk en
-  toont geen verzonnen transacties.
+- **Inkomstenbelasting**: het jaaroverzicht is een schatting voor een eenmanszaak
+  zonder ander box 1-inkomen, eigen woning of fiscale partner. Kasflow dient
+  die aangifte niet zelf in.
+- **Bankkoppeling**: er is geen live PSD2-koppeling. Je importeert een afschrift.
 - **OCR**: bonnetjes worden bewaard maar niet automatisch uitgelezen.
 - **E-facturatie**: B2B e-invoicing is in Nederland nog niet verplicht (het
   kabinet mikt op 1 juli 2030); factuurgegevens zijn er wel op voorbereid.

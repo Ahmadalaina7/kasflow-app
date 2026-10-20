@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import MetaData, inspect, text
+from sqlalchemy import Boolean, MetaData, inspect, text
 from sqlalchemy.engine import Engine
 
 logger = logging.getLogger("kasflow.migrations")
@@ -34,6 +34,10 @@ BACKFILL_DEFAULTS: dict[str, tuple[str, object]] = {
     "vat_treatment": ("'standard'", "standard"),
     "vat_cents": ("0", 0),
     "input_vat_cents": ("0", 0),
+    "ib_starter": ("0", 0),
+    "ib_hours_criterion": ("0", 0),
+    "reminder_count": ("0", 0),
+    "vat_origin": ("'nl'", "nl"),
 }
 
 INVOICE_COLUMNS = [
@@ -70,6 +74,10 @@ def add_missing_columns(engine: Engine, metadata: MetaData) -> list[tuple[str, s
                     continue
                 column_type = column.type.compile(dialect=engine.dialect)
                 default = BACKFILL_DEFAULTS.get(column.name)
+                if default is not None and isinstance(column.type, Boolean):
+                    # PostgreSQL rejects 0/1 as a boolean default.
+                    flag = bool(default[1])
+                    default = ("TRUE" if flag else "FALSE", flag)
                 ddl = f'ALTER TABLE {table.name} ADD COLUMN "{column.name}" {column_type}'
                 if default is not None and not column.nullable:
                     ddl += f" NOT NULL DEFAULT {default[0]}"

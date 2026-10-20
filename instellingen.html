@@ -119,6 +119,11 @@
             </select>
             <div class="field-hint">Kies de KOR alleen als je je daarvoor bij de Belastingdienst hebt aangemeld. Je facturen krijgen dan 0% en de wettelijke vrijstellingstekst.</div>
           </div>
+          <div class="toggle-item" style="margin-top:16px">
+            <span><strong>Ik ben starter voor de inkomstenbelasting</strong>
+            <small>Dan telt de startersaftrek mee op het jaaroverzicht, als je 1.225 uur haalt. Maximaal drie keer in vijf jaar.</small></span>
+            <label class="switch"><span class="sr-only">Starter</span><input type="checkbox" id="company-starter"><span class="switch-track"></span></label>
+          </div>
           <div class="form-actions">
             <button type="submit" class="btn btn-primary" id="company-save">Bedrijfsgegevens opslaan</button>
           </div>
@@ -270,6 +275,7 @@
       payment_term_days: Number(value('company-terms')) || 30,
       invoice_prefix: value('company-prefix') || null,
       vat_scheme: document.getElementById('company-vat-scheme').value,
+      ib_starter: document.getElementById('company-starter').checked,
       notify_email: document.getElementById('notify-email').checked,
       notify_sms: document.getElementById('notify-sms').checked,
       notify_backup: document.getElementById('notify-backup').checked
@@ -293,6 +299,7 @@
     fillValue('company-prefix', user.invoice_prefix);
     document.getElementById('company-terms').value = String(user.payment_term_days || 30);
     document.getElementById('company-vat-scheme').value = user.vat_scheme || 'standard';
+    document.getElementById('company-starter').checked = Boolean(user.ib_starter);
     document.getElementById('account-email').value = user.email;
     document.getElementById('account-verified').textContent = user.email_verified
       ? 'Dit adres is bevestigd.'

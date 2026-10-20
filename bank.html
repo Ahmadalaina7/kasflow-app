@@ -27,65 +27,291 @@
     <div class="topbar">
       <div>
         <h1>Bank</h1>
-        <div class="topbar-sub">Koppel je zakelijke rekening om betalingen automatisch te herkennen.</div>
+        <div class="topbar-sub" id="bank-summary">Importeer je afschrift zodat geen betaling of kostenregel ontbreekt in je btw-aangifte.</div>
       </div>
       <div class="topbar-actions">
-        <a href="facturen.html" class="btn btn-outline">Naar facturen</a>
+        <button type="button" class="btn btn-primary" id="import-shortcut">Afschrift importeren</button>
       </div>
     </div>
 
-    <div class="alert warning">
-      <div><strong>Nog geen bank gekoppeld.</strong> Kasflow kan niet rechtstreeks bij je bank. Daarvoor is een erkende
-      bankkoppelprovider (PSD2) nodig met jouw expliciete toestemming. Deel nooit je bankwachtwoord met een app.</div>
+    <div class="alert">
+      <div><strong>Zonder bankwachtwoord.</strong> Download bij je bank een CAMT.053-bestand of een CSV-afschrift
+      (ING, Rabobank, ABN AMRO, bunq, Knab, Triodos) en zet het hier. Kasflow logt nooit in op je bank.
+      Een regel die het factuurnummer bevat, markeren we automatisch als betaald.</div>
     </div>
 
-    <div class="settings-grid" style="margin-top:24px">
-      <section class="settings-card">
-        <h2>Wat er nodig is</h2>
-        <p>Een bankkoppeling werkt in drie stappen. Zolang die er niet is, blijft dit scherm leeg — we tonen geen
-        verzonnen rekeningen of transacties.</p>
-        <div class="toggle-list">
-          <div class="toggle-item">
-            <span><strong>1. Koppelprovider kiezen</strong><small>Een partij met een PSD2-vergunning die bij jouw bank mag koppelen.</small></span>
-          </div>
-          <div class="toggle-item">
-            <span><strong>2. Toestemming geven bij je bank</strong><small>Je logt zelf in bij de bank en geeft per rekening toestemming.</small></span>
-          </div>
-          <div class="toggle-item">
-            <span><strong>3. Transacties koppelen</strong><small>Betalingen worden daarna naast je facturen gelegd.</small></span>
-          </div>
-        </div>
-        <div class="form-actions">
-          <a class="btn btn-primary" href="mailto:support@kasflow.nl?subject=Bankkoppeling%20aanvragen">Koppeling aanvragen</a>
-          <a class="btn btn-outline" href="instellingen.html">Bedrijfsgegevens controleren</a>
-        </div>
-      </section>
+    <p id="bank-feedback" class="form-note" role="status" aria-live="polite"></p>
 
-      <section class="settings-card">
-        <h2>Rekeningen</h2>
-        <p>Hier verschijnen je gekoppelde rekeningen met de laatste synchronisatie.</p>
-        <div class="empty-state" style="padding:26px 8px">
-          <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 10l9-6 9 6"/><path d="M5 10h14v9H5z"/><path d="M9 19v-6m6 6v-6"/></svg></div>
-          <h3>Geen rekeningen gekoppeld</h3>
-          <p>Na het afronden van de koppeling zie je hier je rekeningen en hun status.</p>
+    <section class="panel" id="upload-panel">
+      <div class="panel-head">
+        <h2>Afschrift toevoegen</h2>
+        <span class="pill muted">CAMT.053 of CSV · max 5 MB</span>
+      </div>
+      <form id="bank-form">
+        <div class="upload-dropzone" id="dropzone" role="button" tabindex="0" aria-label="Kies of sleep een afschrift">
+          <span class="upload-icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+          </span>
+          <strong>Sleep je afschrift hierheen</strong>
+          <span>CAMT.053 (XML) is het meest betrouwbaar. CSV werkt als de kolomnamen erin staan.</span>
+          <span class="file-chip" id="file-chip"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg><span id="file-chip-name"></span></span>
+          <input type="file" id="bank-file" accept=".csv,.xml,text/csv,application/xml,text/xml" hidden>
         </div>
-      </section>
-    </div>
+        <div class="form-actions" style="margin-top:16px">
+          <button type="submit" class="btn btn-primary" id="bank-save">Importeren</button>
+        </div>
+      </form>
+    </section>
 
-    <section class="panel">
+    <section class="panel" style="margin-top:24px">
       <div class="panel-head">
         <h2>Transacties</h2>
+        <div class="filter-pills" role="group" aria-label="Filter">
+          <button type="button" class="filter-pill active" data-filter="open" aria-pressed="true">Nog te koppelen</button>
+          <button type="button" class="filter-pill" data-filter="all" aria-pressed="false">Alles</button>
+        </div>
       </div>
-      <div class="empty-state">
-        <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div>
-        <h3>Nog geen transacties</h3>
-        <p>Zodra een rekening is gekoppeld, verschijnen hier je banktransacties met status en tegenpartij.</p>
-        <a class="btn btn-outline btn-sm" href="bonnetjes.html">Bonnen toevoegen</a>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Datum</th><th>Tegenpartij</th><th>Omschrijving</th><th style="text-align:right">Bedrag</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="bank-body"></tbody>
+        </table>
       </div>
     </section>
   </main>
 </div>
 
 <script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, money, formatShortDate, note, escapeHtml, setBusy, isOpen } = Kasflow;
+  const feedback = document.getElementById('bank-feedback');
+  const summary = document.getElementById('bank-summary');
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('bank-file');
+  const fileChip = document.getElementById('file-chip');
+  const fileChipName = document.getElementById('file-chip-name');
+  const saveButton = document.getElementById('bank-save');
+  const body = document.getElementById('bank-body');
+  let transactions = [];
+  let invoices = [];
+  let receipts = [];
+
+  const STATUS_LABELS = {
+    open: 'Nog te koppelen',
+    invoice: 'Gekoppeld aan factuur',
+    receipt: 'Gekoppeld aan bon',
+    private: 'Privé',
+    ignored: 'Genegeerd'
+  };
+
+  function currentFilter() {
+    const active = document.querySelector('.filter-pill.active');
+    return active ? active.dataset.filter : 'open';
+  }
+
+  function setFile(file) {
+    if (!file) {
+      fileChip.classList.remove('visible');
+      fileChipName.textContent = '';
+      return;
+    }
+    fileChip.classList.add('visible');
+    fileChipName.textContent = file.name;
+  }
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      fileInput.click();
+    }
+  });
+  fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
+  ['dragover', 'dragenter'].forEach(type => dropzone.addEventListener(type, event => {
+    event.preventDefault();
+    dropzone.classList.add('dragging');
+  }));
+  ['dragleave', 'dragend'].forEach(type => dropzone.addEventListener(type, () => dropzone.classList.remove('dragging')));
+  dropzone.addEventListener('drop', event => {
+    event.preventDefault();
+    dropzone.classList.remove('dragging');
+    const files = event.dataTransfer && event.dataTransfer.files;
+    if (files && files.length) {
+      fileInput.files = files;
+      setFile(files[0]);
+    }
+  });
+
+  function invoiceLabel(id) {
+    const invoice = invoices.find(item => item.id === id);
+    return invoice ? invoice.number : 'factuur';
+  }
+
+  function receiptLabel(id) {
+    const receipt = receipts.find(item => item.id === id);
+    return receipt ? receipt.vendor : 'bon';
+  }
+
+  function actions(item) {
+    if (item.status !== 'open') {
+      return '<button type="button" class="btn btn-outline btn-sm" data-action="open" data-id="' + item.id + '">Ontkoppelen</button>';
+    }
+    const bits = [];
+    if (item.suggestion && item.suggestion.kind === 'invoice') {
+      bits.push('<button type="button" class="btn btn-primary btn-sm" data-action="invoice" data-id="' + item.id + '" data-invoice="' + item.suggestion.id + '">Koppel ' + escapeHtml(item.suggestion.label) + '</button>');
+    } else if (item.amount_cents > 0) {
+      const openInvoices = invoices.filter(invoice => isOpen(invoice) && invoice.kind !== 'credit');
+      if (openInvoices.length) {
+        bits.push('<select class="field-control" data-pick-invoice="' + item.id + '" aria-label="Kies factuur">' +
+          '<option value="">Kies factuur…</option>' +
+          openInvoices.map(invoice => '<option value="' + invoice.id + '">' + escapeHtml(invoice.number) + ' · ' + money(invoice.total_cents) + '</option>').join('') +
+          '</select>');
+      }
+    }
+    if (item.suggestion && item.suggestion.kind === 'receipt') {
+      bits.push('<button type="button" class="btn btn-primary btn-sm" data-action="receipt" data-id="' + item.id + '" data-receipt="' + item.suggestion.id + '">Koppel ' + escapeHtml(item.suggestion.label) + '</button>');
+    } else if (item.amount_cents < 0) {
+      bits.push('<a class="btn btn-outline btn-sm" href="bonnetjes.html">Bon toevoegen</a>');
+    }
+    bits.push('<button type="button" class="btn btn-ghost btn-sm" data-action="private" data-id="' + item.id + '">Privé</button>');
+    bits.push('<button type="button" class="btn btn-ghost btn-sm" data-action="ignored" data-id="' + item.id + '">Negeren</button>');
+    return bits.join(' ');
+  }
+
+  function render() {
+    const filter = currentFilter();
+    const rows = transactions.filter(item => filter === 'all' || item.status === 'open');
+    const openCount = transactions.filter(item => item.status === 'open').length;
+    summary.textContent = transactions.length
+      ? transactions.length + ' transacties, ' + openCount + ' nog te koppelen.'
+      : 'Nog geen afschrift geïmporteerd.';
+    if (!rows.length) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="6"><div class="empty-state">' +
+        '<h3>' + (transactions.length ? 'Alles is gekoppeld' : 'Nog geen transacties') + '</h3>' +
+        '<p>' + (transactions.length
+          ? 'Nieuwe regels verschijnen hier na de volgende import.'
+          : 'Importeer een CAMT.053- of CSV-afschrift van je zakelijke rekening.') + '</p></div></td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(item => {
+      let status = STATUS_LABELS[item.status] || item.status;
+      if (item.status === 'invoice' && item.invoice_id) status += ' ' + invoiceLabel(item.invoice_id);
+      if (item.status === 'receipt' && item.receipt_id) status += ' ' + receiptLabel(item.receipt_id);
+      return '<tr>' +
+        '<td data-label="Datum">' + formatShortDate(item.booking_date) + '</td>' +
+        '<td data-label="Tegenpartij" class="row-name">' + escapeHtml(item.counterparty || '—') + '</td>' +
+        '<td data-label="Omschrijving">' + escapeHtml(item.description || '') + '</td>' +
+        '<td data-label="Bedrag" class="amount" style="text-align:right">' + money(item.amount_cents) + '</td>' +
+        '<td data-label="Status">' + escapeHtml(status) + '</td>' +
+        '<td class="cell-actions">' + actions(item) + '</td></tr>';
+    }).join('');
+  }
+
+  async function loadAll() {
+    try {
+      const [bank, invoiceData, receiptData] = await Promise.all([
+        api('/api/bank/transactions'),
+        api('/api/invoices'),
+        api('/api/receipts')
+      ]);
+      transactions = bank;
+      invoices = invoiceData;
+      receipts = receiptData;
+      render();
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    }
+  }
+
+  document.getElementById('bank-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const file = fileInput.files[0];
+    if (!file) {
+      note(feedback, 'Kies eerst een afschrift.', 'error');
+      return;
+    }
+    const payload = new FormData();
+    payload.append('file', file);
+    setBusy(saveButton, true, 'Importeren…');
+    try {
+      const result = await api('/api/bank/import', { method: 'POST', body: payload });
+      fileInput.value = '';
+      setFile(null);
+      await loadAll();
+      note(feedback, result.imported + ' nieuwe regels, ' + result.duplicates + ' stonden er al' +
+        (result.matched ? ', ' + result.matched + ' automatisch gekoppeld aan een factuur' : '') + '.', 'success');
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    } finally {
+      setBusy(saveButton, false);
+    }
+  });
+
+  async function classify(id, action, extra) {
+    const updated = await api('/api/bank/transactions/' + id, {
+      method: 'POST',
+      body: Object.assign({ action: action }, extra || {})
+    });
+    transactions = transactions.map(item => item.id === updated.id ? Object.assign({}, item, updated) : item);
+    if (action === 'invoice' && extra && extra.invoice_id) {
+      invoices = invoices.map(invoice => invoice.id === extra.invoice_id
+        ? Object.assign({}, invoice, { status: 'paid' })
+        : invoice);
+    }
+    render();
+  }
+
+  body.addEventListener('click', async event => {
+    const button = event.target.closest('[data-action]');
+    if (!button) return;
+    setBusy(button, true, '…');
+    try {
+      const extra = {};
+      if (button.dataset.invoice) extra.invoice_id = Number(button.dataset.invoice);
+      if (button.dataset.receipt) extra.receipt_id = Number(button.dataset.receipt);
+      await classify(Number(button.dataset.id), button.dataset.action, extra);
+      note(feedback, 'Transactie bijgewerkt.', 'success');
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      setBusy(button, false);
+    }
+  });
+
+  body.addEventListener('change', async event => {
+    const select = event.target.closest('[data-pick-invoice]');
+    if (!select || !select.value) return;
+    try {
+      await classify(Number(select.dataset.pickInvoice), 'invoice', { invoice_id: Number(select.value) });
+      note(feedback, 'Betaling gekoppeld aan de factuur. Die staat nu op betaald.', 'success');
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    }
+  });
+
+  document.querySelectorAll('.filter-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      document.querySelectorAll('.filter-pill').forEach(item => {
+        const active = item === pill;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      render();
+    });
+  });
+
+  document.getElementById('import-shortcut').addEventListener('click', () => {
+    document.getElementById('upload-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.setTimeout(() => fileInput.click(), 200);
+  });
+
+  Kasflow.ready.then(loadAll);
+})();
+</script>
+
 </body>
 </html>

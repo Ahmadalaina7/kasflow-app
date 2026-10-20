@@ -60,10 +60,24 @@ from sqlalchemy.orm import (
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from bank_import import StatementError, parse_statement
 from config import Settings
 from invoice_pdf import InvoiceLineData, InvoicePdfData, Party, build_invoice_pdf
 from mailer import Mailer
 from migrations import run_migrations
+from tax_rules import (
+    CATEGORY_BY_KEY,
+    EXPENSE_CATEGORIES,
+    LEGACY_CATEGORIES,
+    PURCHASE_VAT_ORIGINS,
+    REVERSE_CHARGE_RUBRICS,
+    depreciation_between,
+    estimate_income_tax,
+    expense_category,
+    kia_amount,
+    month_index,
+    tax_year,
+)
 
 logger = logging.getLogger("kasflow.app")
 
@@ -97,9 +111,16 @@ VAT_RUBRICS = {
     "1b": "Leveringen/diensten belast met laag tarief (9%)",
     "1c": "Leveringen/diensten belast met overige tarieven",
     "1e": "Leveringen/diensten belast met 0% of niet bij u belast (o.a. btw verlegd)",
+    "2a": "Leveringen/diensten waarbij de btw naar u is verlegd",
     "3a": "Leveringen naar landen buiten de EU (uitvoer)",
     "3b": "Leveringen naar of diensten in landen binnen de EU",
+    "4a": "Leveringen/diensten uit landen buiten de EU",
+    "4b": "Leveringen/diensten uit landen binnen de EU",
 }
+# Rubrics where only the base amount is filled in, without VAT.
+VAT_BASE_ONLY_RUBRICS = {"1e", "3a", "3b"}
+
+BANK_STATUSES = {"open", "invoice", "receipt", "private", "ignored"}
 
 DOMESTIC_COUNTRIES = {"nederland", "the netherlands", "netherlands", "nl"}
 
@@ -110,6 +131,8 @@ PROTECTED_PAGES = {
     "bonnetjes.html",
     "btw.html",
     "bank.html",
+    "uren.html",
+    "jaaroverzicht.html",
     "klanten.html",
     "instellingen.html",
 }
@@ -153,6 +176,8 @@ class User(Base):
     payment_term_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     invoice_prefix: Mapped[str | None] = mapped_column(String(12))
     vat_scheme: Mapped[str] = mapped_column(String(20), default="standard", nullable=False)
+    ib_starter: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ib_hours_criterion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verification_hash: Mapped[str | None] = mapped_column(String(64))
     verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -206,6 +231,8 @@ class Invoice(Base):
     # invoice must not change when the profile or customer is edited later.
     supplier_snapshot: Mapped[str | None] = mapped_column(Text)
     customer_snapshot: Mapped[str | None] = mapped_column(Text)
+    reminder_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lines: Mapped[list[InvoiceLine]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan"
     )
@@ -235,10 +262,56 @@ class Receipt(Base):
     receipt_date: Mapped[date] = mapped_column(Date, nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     vat_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    vat_origin: Mapped[str] = mapped_column(String(12), default="nl", nullable=False)
     category: Mapped[str] = mapped_column(String(60), nullable=False)
+    # Only for investments: depreciated over this many years.
+    life_years: Mapped[int | None] = mapped_column(Integer)
     filename: Mapped[str] = mapped_column(String(200), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class BankTransaction(Base):
+    __tablename__ = "bank_transactions"
+    __table_args__ = (UniqueConstraint("owner_id", "fingerprint", name="uq_bank_owner_fingerprint"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    booking_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    counterparty: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    counter_iban: Mapped[str] = mapped_column(String(42), default="", nullable=False)
+    description: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(12), default="open", nullable=False)
+    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"))
+    receipt_id: Mapped[int | None] = mapped_column(ForeignKey("receipts.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class TimeEntry(Base):
+    __tablename__ = "time_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(String(300), nullable=False)
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Trip(Base):
+    __tablename__ = "trips"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    trip_date: Mapped[date] = mapped_column(Date, nullable=False)
+    kilometers: Mapped[Decimal] = mapped_column(Numeric(8, 1), nullable=False)
+    origin: Mapped[str] = mapped_column(String(160), nullable=False)
+    destination: Mapped[str] = mapped_column(String(160), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(300), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -374,6 +447,8 @@ class UserOutput(BaseModel):
     payment_term_days: int
     invoice_prefix: str | None
     vat_scheme: str
+    ib_starter: bool
+    ib_hours_criterion: bool
     email_verified: bool
     notify_email: bool
     notify_sms: bool
@@ -399,6 +474,8 @@ class ProfileInput(BaseModel):
     payment_term_days: Annotated[int, Field(ge=0, le=365)] = 30
     invoice_prefix: Annotated[str | None, Field(max_length=12)] = None
     vat_scheme: Literal["standard", "kor"] = "standard"
+    ib_starter: bool = False
+    ib_hours_criterion: bool = False
     notify_email: bool = True
     notify_sms: bool = False
     notify_backup: bool = True
@@ -541,6 +618,8 @@ class InvoiceOutput(BaseModel):
     kind: str
     credited_invoice_id: int | None
     vat_treatment: str
+    reminder_count: int
+    last_reminder_at: datetime | None
     lines: list[InvoiceLineOutput]
 
     model_config = ConfigDict(from_attributes=True)
@@ -575,6 +654,28 @@ class VatRubricOutput(BaseModel):
     vat_cents: int
 
 
+class VatFormLine(BaseModel):
+    """One line of the VAT return as it is typed in, in whole euros."""
+
+    code: str
+    label: str
+    base_euros: int | None
+    vat_euros: int | None
+
+
+class IcpLine(BaseModel):
+    vat_number: str
+    name: str
+    country: str
+    net_cents: int
+
+
+class VatCheck(BaseModel):
+    ok: bool
+    label: str
+    href: str | None = None
+
+
 class VatQuarterOutput(BaseModel):
     year: int
     quarter: int
@@ -587,11 +688,16 @@ class VatQuarterOutput(BaseModel):
     receipt_count: int
     net_cents: int
     vat_cents: int
+    reverse_charge_vat_cents: int
     input_vat_cents: int
     payable_cents: int
     kor: bool
     rates: list[VatRateOutput]
     rubrics: list[VatRubricOutput]
+    form: list[VatFormLine]
+    form_total_euros: int
+    icp: list[IcpLine]
+    checks: list[VatCheck]
     approved_at: datetime | None
     approved_on: date | None
 
@@ -612,12 +718,134 @@ class ReceiptOutput(BaseModel):
     receipt_date: date
     amount_cents: int
     vat_cents: int
+    vat_origin: str
     category: str
+    category_label: str
+    deductible_vat_cents: int
+    life_years: int | None
     content_type: str
     size_bytes: int
     created_at: datetime
 
+
+class BankTransactionOutput(BaseModel):
+    id: int
+    booking_date: date
+    amount_cents: int
+    counterparty: str
+    counter_iban: str
+    description: str
+    status: str
+    invoice_id: int | None
+    receipt_id: int | None
+    suggestion: dict | None = None
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class BankImportOutput(BaseModel):
+    imported: int
+    duplicates: int
+    matched: int
+
+
+class BankActionInput(BaseModel):
+    action: Literal["invoice", "receipt", "private", "ignored", "open"]
+    invoice_id: int | None = None
+    receipt_id: int | None = None
+
+
+class TimeEntryInput(BaseModel):
+    entry_date: date
+    hours: Annotated[Decimal, Field(gt=0, le=24, max_digits=4, decimal_places=2)]
+    description: Annotated[str, Field(min_length=1, max_length=300)]
+    customer_id: int | None = None
+
+    @field_validator("description")
+    @classmethod
+    def strip_description(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Beschrijf kort waar je aan hebt gewerkt")
+        return stripped
+
+
+class TimeEntryOutput(BaseModel):
+    id: int
+    entry_date: date
+    minutes: int
+    hours: Decimal
+    description: str
+    customer_id: int | None
+
+
+class TripInput(BaseModel):
+    trip_date: date
+    kilometers: Annotated[Decimal, Field(gt=0, le=5000, max_digits=6, decimal_places=1)]
+    origin: Annotated[str, Field(min_length=1, max_length=160)]
+    destination: Annotated[str, Field(min_length=1, max_length=160)]
+    purpose: Annotated[str, Field(min_length=1, max_length=300)]
+
+    @field_validator("origin", "destination", "purpose")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Dit veld is verplicht")
+        return stripped
+
+
+class TripOutput(BaseModel):
+    id: int
+    trip_date: date
+    kilometers: Decimal
+    origin: str
+    destination: str
+    purpose: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class YearLine(BaseModel):
+    key: str
+    label: str
+    cents: int
+
+
+class YearAsset(BaseModel):
+    vendor: str
+    receipt_date: date
+    cost_cents: int
+    life_years: int
+    depreciation_cents: int
+
+
+class YearOverviewOutput(BaseModel):
+    year: int
+    rules_year: int
+    rules_exact: bool
+    revenue_cents: int
+    costs_cents: int
+    depreciation_cents: int
+    mileage_cents: int
+    kia_cents: int
+    profit_cents: int
+    hours_minutes: int
+    hours_criterion: int
+    hours_met: bool
+    kilometers: Decimal
+    starter: bool
+    self_employed_deduction: int
+    starter_deduction: int
+    mkb_exemption: int
+    taxable_profit: int
+    income_tax_cents: int
+    zvw_cents: int
+    total_tax_cents: int
+    monthly_reserve_cents: int
+    categories: list[YearLine]
+    assets: list[YearAsset]
+    note: str
 
 
 class AuditOutput(BaseModel):
@@ -635,6 +863,20 @@ class AuditOutput(BaseModel):
 
 def to_cents(amount: Decimal) -> int:
     return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def apply_ib_share(cents: int, share: Decimal) -> int:
+    if share == 1:
+        return cents
+    return int((Decimal(cents) * share).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def year_category_label(key: str) -> str:
+    if key == "afschrijving":
+        return "Afschrijving bedrijfsmiddelen"
+    if key == "kilometers":
+        return "Zakelijke kilometers (forfait)"
+    return CATEGORY_BY_KEY.get(key, CATEGORY_BY_KEY["overig"]).label
 
 
 def hash_password(password: str) -> str:
@@ -938,6 +1180,8 @@ def create_app(
             "payment_term_days": user.payment_term_days,
             "invoice_prefix": user.invoice_prefix,
             "vat_scheme": user.vat_scheme,
+            "ib_starter": user.ib_starter,
+            "ib_hours_criterion": user.ib_hours_criterion,
             "email_verified": user.email_verified_at is not None,
             "notify_email": user.notify_email,
             "notify_sms": user.notify_sms,
@@ -1073,6 +1317,185 @@ def create_app(
                 highest = max(highest, int(suffix))
         return f"{base}{highest + 1:03d}"
 
+    def deductible_vat(receipt: Receipt, user: User) -> int:
+        """VAT on a purchase that may be deducted as voorbelasting (rubric 5b)."""
+        if user.vat_scheme == "kor" or receipt.vat_origin == "none":
+            return 0
+        if not expense_category(receipt.category).vat_deductible:
+            return 0
+        return receipt.vat_cents
+
+    def receipt_cost(receipt: Receipt, user: User) -> int:
+        """What the purchase costs the business, excluding VAT it gets back."""
+        if receipt.vat_origin in REVERSE_CHARGE_RUBRICS:
+            # The amount is without VAT; the VAT declared on it is only a cost
+            # when it cannot be deducted again.
+            return receipt.amount_cents + receipt.vat_cents - deductible_vat(receipt, user)
+        return receipt.amount_cents - deductible_vat(receipt, user)
+
+    def receipt_output(receipt: Receipt, user: User) -> ReceiptOutput:
+        category = expense_category(receipt.category)
+        return ReceiptOutput(
+            id=receipt.id,
+            vendor=receipt.vendor,
+            receipt_date=receipt.receipt_date,
+            amount_cents=receipt.amount_cents,
+            vat_cents=receipt.vat_cents,
+            vat_origin=receipt.vat_origin,
+            category=category.key,
+            category_label=category.label,
+            deductible_vat_cents=deductible_vat(receipt, user),
+            life_years=receipt.life_years,
+            content_type=receipt.content_type,
+            size_bytes=receipt.size_bytes,
+            created_at=receipt.created_at,
+        )
+
+    def time_output(entry: TimeEntry) -> TimeEntryOutput:
+        hours = (Decimal(entry.minutes) / Decimal(60)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        return TimeEntryOutput(
+            id=entry.id,
+            entry_date=entry.entry_date,
+            minutes=entry.minutes,
+            hours=hours,
+            description=entry.description,
+            customer_id=entry.customer_id,
+        )
+
+    def build_year_overview(session: Session, user: User, year: int) -> YearOverviewOutput:
+        rules, exact = tax_year(year)
+        start, end = date(year, 1, 1), date(year, 12, 31)
+        invoices = session.scalars(
+            select(Invoice).where(
+                Invoice.owner_id == user.id,
+                Invoice.invoice_date >= start,
+                Invoice.invoice_date <= end,
+            )
+        ).all()
+        receipts = session.scalars(
+            select(Receipt).where(
+                Receipt.owner_id == user.id,
+                Receipt.receipt_date >= start,
+                Receipt.receipt_date <= end,
+            )
+        ).all()
+        # Depreciation also runs for assets bought in earlier years.
+        assets = session.scalars(
+            select(Receipt).where(
+                Receipt.owner_id == user.id,
+                Receipt.life_years.is_not(None),
+                Receipt.receipt_date <= end,
+            )
+        ).all()
+        entries = session.scalars(
+            select(TimeEntry).where(
+                TimeEntry.owner_id == user.id,
+                TimeEntry.entry_date >= start,
+                TimeEntry.entry_date <= end,
+            )
+        ).all()
+        trips = session.scalars(
+            select(Trip).where(
+                Trip.owner_id == user.id,
+                Trip.trip_date >= start,
+                Trip.trip_date <= end,
+            )
+        ).all()
+
+        revenue_cents = sum(invoice.subtotal_cents for invoice in invoices)
+        category_totals: dict[str, int] = {}
+        costs_cents = 0
+        for receipt in receipts:
+            category = expense_category(receipt.category)
+            if category.asset:
+                continue
+            cost = apply_ib_share(receipt_cost(receipt, user), category.ib_share)
+            costs_cents += cost
+            category_totals[category.key] = category_totals.get(category.key, 0) + cost
+
+        first_month = month_index(start)
+        last_month = month_index(date(year, 12, 1))
+        depreciation_cents = 0
+        invested = 0
+        asset_rows: list[YearAsset] = []
+        for receipt in assets:
+            category = expense_category(receipt.category)
+            if not category.asset or not receipt.life_years:
+                continue
+            cost = receipt_cost(receipt, user)
+            amount = depreciation_between(
+                cost, 0, receipt.life_years, receipt.receipt_date, first_month, last_month
+            )
+            depreciation_cents += amount
+            if start <= receipt.receipt_date <= end and cost >= rules.kia_item_minimum:
+                invested += cost
+            if amount or start <= receipt.receipt_date <= end:
+                asset_rows.append(
+                    YearAsset(
+                        vendor=receipt.vendor,
+                        receipt_date=receipt.receipt_date,
+                        cost_cents=cost,
+                        life_years=receipt.life_years,
+                        depreciation_cents=amount,
+                    )
+                )
+        if depreciation_cents:
+            category_totals["afschrijving"] = depreciation_cents
+
+        kilometers = sum((trip.kilometers for trip in trips), Decimal("0"))
+        mileage_cents = int(
+            (kilometers * Decimal(rules.km_rate_cents)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        )
+        if mileage_cents:
+            category_totals["kilometers"] = mileage_cents
+        kia_cents = kia_amount(rules, invested)
+        profit_cents = revenue_cents - costs_cents - depreciation_cents - mileage_cents - kia_cents
+        hours_minutes = sum(entry.minutes for entry in entries)
+        hours_met = hours_minutes >= rules.hours_criterion * 60
+        tax = estimate_income_tax(
+            rules, profit_cents, hours_criterion_met=hours_met, starter=user.ib_starter
+        )
+        note = (
+            f"Tarieven {rules.year} (nog niet gepubliceerd voor {year})."
+            if not exact
+            else (
+                "Schatting voor een eenmanszaak zonder ander box 1-inkomen, eigen woning of fiscale partner. "
+                "Neem de winst over in je aangifte inkomstenbelasting; Kasflow dient niet zelf in."
+            )
+        )
+        return YearOverviewOutput(
+            year=year,
+            rules_year=rules.year,
+            rules_exact=exact,
+            revenue_cents=revenue_cents,
+            costs_cents=costs_cents,
+            depreciation_cents=depreciation_cents,
+            mileage_cents=mileage_cents,
+            kia_cents=kia_cents,
+            profit_cents=profit_cents,
+            hours_minutes=hours_minutes,
+            hours_criterion=rules.hours_criterion,
+            hours_met=hours_met,
+            kilometers=kilometers.quantize(Decimal("0.1")),
+            starter=user.ib_starter,
+            self_employed_deduction=tax.self_employed_deduction,
+            starter_deduction=tax.starter_deduction,
+            mkb_exemption=tax.mkb_exemption,
+            taxable_profit=tax.taxable_profit,
+            income_tax_cents=tax.income_tax,
+            zvw_cents=tax.zvw,
+            total_tax_cents=tax.total,
+            monthly_reserve_cents=(tax.total + 11) // 12,
+            categories=[
+                YearLine(key=key, label=year_category_label(key), cents=cents)
+                for key, cents in sorted(category_totals.items(), key=lambda item: -item[1])
+            ],
+            assets=asset_rows,
+            note=note,
+        )
+
     def build_vat_quarter(session: Session, user: User, year: int, quarter: int) -> VatQuarterOutput:
         start, end = quarter_bounds(year, quarter)
         invoices = session.scalars(
@@ -1087,12 +1510,26 @@ def create_app(
 
         rate_totals: dict[int, dict[str, int]] = {}
         rubric_totals: dict[str, dict[str, int]] = {
-            code: {"net": 0, "vat": 0} for code in ("1a", "1b", "1e", "3a", "3b")
+            code: {"net": 0, "vat": 0}
+            for code in ("1a", "1b", "1e", "2a", "3a", "3b", "4a", "4b")
         }
         net_cents = 0
         vat_cents = 0
         kor_net_cents = 0
+        icp: dict[str, IcpLine] = {}
         for invoice in invoices:
+            if invoice.vat_treatment == "intra_eu":
+                customer = (
+                    json.loads(invoice.customer_snapshot)
+                    if invoice.customer_snapshot
+                    else customer_details(session.get(Customer, invoice.customer_id))
+                )
+                key = customer["vat_number"].replace(" ", "").upper()
+                entry = icp.setdefault(
+                    key,
+                    IcpLine(vat_number=key, name=customer["name"], country=customer["country"], net_cents=0),
+                )
+                entry.net_cents += invoice.subtotal_cents
             for line in invoice.lines:
                 bucket = rate_totals.setdefault(line.vat_rate_bps, {"net": 0, "vat": 0})
                 bucket["net"] += line.net_cents
@@ -1126,14 +1563,52 @@ def create_app(
                 Receipt.receipt_date <= end,
             )
         ).all()
-        # Under the KOR no VAT is charged, so none can be deducted either.
-        input_vat_cents = 0 if kor else sum(receipt.vat_cents for receipt in receipts)
+        reverse_charge_vat_cents = 0
+        if not kor:
+            for receipt in receipts:
+                code = REVERSE_CHARGE_RUBRICS.get(receipt.vat_origin)
+                if code is None:
+                    continue
+                rubric = rubric_totals.setdefault(code, {"net": 0, "vat": 0})
+                rubric["net"] += receipt.amount_cents
+                rubric["vat"] += receipt.vat_cents
+                reverse_charge_vat_cents += receipt.vat_cents
+        # Under the KOR no VAT return is filed, so none of this is deducted either.
+        input_vat_cents = 0 if kor else sum(deductible_vat(receipt, user) for receipt in receipts)
         rubrics = [
             VatRubricOutput(
                 code=code, label=VAT_RUBRICS[code], net_cents=totals["net"], vat_cents=totals["vat"]
             )
             for code, totals in sorted(rubric_totals.items())
         ]
+
+        # The return is filed in whole euros, rounded in the filer's favour:
+        # amounts owed down, deductible VAT up.
+        form = []
+        owed_euros = 0
+        for code in ("1a", "1b", "1c", "1e", "2a", "3a", "3b", "4a", "4b"):
+            totals = rubric_totals.get(code)
+            if totals is None and code == "1c":
+                continue
+            totals = totals or {"net": 0, "vat": 0}
+            base_only = code in VAT_BASE_ONLY_RUBRICS
+            line_vat = None if base_only else totals["vat"] // 100
+            if line_vat is not None:
+                owed_euros += line_vat
+            form.append(
+                VatFormLine(
+                    code=code,
+                    label=VAT_RUBRICS[code],
+                    base_euros=totals["net"] // 100,
+                    vat_euros=line_vat,
+                )
+            )
+        input_euros = -(-input_vat_cents // 100)
+        form.append(VatFormLine(code="5a", label="Verschuldigde omzetbelasting", base_euros=None, vat_euros=owed_euros))
+        form.append(VatFormLine(code="5b", label="Voorbelasting", base_euros=None, vat_euros=input_euros))
+        form.append(
+            VatFormLine(code="5c", label="Subtotaal", base_euros=None, vat_euros=owed_euros - input_euros)
+        )
         if kor_net_cents:
             rubrics.append(
                 VatRubricOutput(
@@ -1151,6 +1626,32 @@ def create_app(
                 VatDeclaration.quarter == quarter,
             )
         )
+        bank_rows = session.scalars(
+            select(BankTransaction).where(
+                BankTransaction.owner_id == user.id,
+                BankTransaction.booking_date >= start,
+                BankTransaction.booking_date <= end,
+            )
+        ).all()
+        open_out = sum(1 for item in bank_rows if item.status == "open" and item.amount_cents < 0)
+        open_in = sum(1 for item in bank_rows if item.status == "open" and item.amount_cents > 0)
+        checks = [
+            VatCheck(
+                ok=bool(bank_rows),
+                label="Bankafschrift voor dit kwartaal geïmporteerd" if bank_rows else "Nog geen bankafschrift in dit kwartaal",
+                href="bank.html",
+            ),
+            VatCheck(
+                ok=open_out == 0,
+                label="Alle afschrijvingen zijn gekoppeld" if open_out == 0 else f"{open_out} afschrijvingen nog zonder bon",
+                href="bank.html",
+            ),
+            VatCheck(
+                ok=open_in == 0,
+                label="Alle bijschrijvingen zijn gekoppeld" if open_in == 0 else f"{open_in} bijschrijvingen nog niet gekoppeld aan een factuur",
+                href="bank.html",
+            ),
+        ]
 
         return VatQuarterOutput(
             year=year,
@@ -1164,10 +1665,17 @@ def create_app(
             receipt_count=len(receipts),
             net_cents=net_cents,
             vat_cents=vat_cents,
+            reverse_charge_vat_cents=reverse_charge_vat_cents,
             input_vat_cents=input_vat_cents,
-            payable_cents=vat_cents - input_vat_cents,
+            payable_cents=(
+                0 if kor else vat_cents + reverse_charge_vat_cents - input_vat_cents
+            ),
             kor=kor,
             rubrics=rubrics,
+            form=form,
+            form_total_euros=owed_euros - input_euros,
+            icp=sorted(icp.values(), key=lambda line: line.vat_number),
+            checks=checks,
             rates=[
                 VatRateOutput(rate_bps=rate, net_cents=totals["net"], vat_cents=totals["vat"])
                 for rate, totals in sorted(rate_totals.items(), reverse=True)
@@ -1422,6 +1930,17 @@ def create_app(
         declarations = session.scalars(
             select(VatDeclaration).where(VatDeclaration.owner_id == user.id)
         ).all()
+        bank = session.scalars(
+            select(BankTransaction)
+            .where(BankTransaction.owner_id == user.id)
+            .order_by(BankTransaction.booking_date, BankTransaction.id)
+        ).all()
+        hours = session.scalars(
+            select(TimeEntry).where(TimeEntry.owner_id == user.id).order_by(TimeEntry.id)
+        ).all()
+        trips = session.scalars(
+            select(Trip).where(Trip.owner_id == user.id).order_by(Trip.id)
+        ).all()
         events = session.scalars(
             select(AuditEvent).where(AuditEvent.owner_id == user.id).order_by(AuditEvent.id)
         ).all()
@@ -1486,12 +2005,27 @@ def create_app(
                     "receipt_date": receipt.receipt_date.isoformat(),
                     "amount_cents": receipt.amount_cents,
                     "vat_cents": receipt.vat_cents,
+                    "vat_origin": receipt.vat_origin,
                     "category": receipt.category,
                     "content_type": receipt.content_type,
                     "size_bytes": receipt.size_bytes,
                     "file": f"bonnetjes/{receipt.id}{Path(receipt.filename).suffix}",
                 }
                 for receipt in receipts
+            ],
+            "bank_transactions": [
+                {
+                    "id": item.id,
+                    "booking_date": item.booking_date.isoformat(),
+                    "amount_cents": item.amount_cents,
+                    "counterparty": item.counterparty,
+                    "counter_iban": item.counter_iban,
+                    "description": item.description,
+                    "status": item.status,
+                    "invoice_id": item.invoice_id,
+                    "receipt_id": item.receipt_id,
+                }
+                for item in bank
             ],
             "vat_declarations": [
                 {
@@ -1503,6 +2037,27 @@ def create_app(
                     "approved_at": declaration.approved_at.isoformat(),
                 }
                 for declaration in declarations
+            ],
+            "time_entries": [
+                {
+                    "id": entry.id,
+                    "entry_date": entry.entry_date.isoformat(),
+                    "minutes": entry.minutes,
+                    "description": entry.description,
+                    "customer_id": entry.customer_id,
+                }
+                for entry in hours
+            ],
+            "trips": [
+                {
+                    "id": trip.id,
+                    "trip_date": trip.trip_date.isoformat(),
+                    "kilometers": str(trip.kilometers),
+                    "origin": trip.origin,
+                    "destination": trip.destination,
+                    "purpose": trip.purpose,
+                }
+                for trip in trips
             ],
             "activity": [
                 {"action": event.action, "detail": event.detail, "at": event.created_at.isoformat()}
@@ -1562,6 +2117,9 @@ def create_app(
             directory.rmdir()
 
         invoice_ids = select(Invoice.id).where(Invoice.owner_id == user_id)
+        session.execute(delete(BankTransaction).where(BankTransaction.owner_id == user_id))
+        session.execute(delete(TimeEntry).where(TimeEntry.owner_id == user_id))
+        session.execute(delete(Trip).where(Trip.owner_id == user_id))
         session.execute(
             update(Invoice).where(Invoice.owner_id == user_id).values(credited_invoice_id=None)
         )
@@ -1923,6 +2481,62 @@ def create_app(
             sent_at=invoice.sent_at,
         )
 
+    @app.post("/api/invoices/{invoice_id}/remind", response_model=SendInvoiceOutput)
+    def remind_invoice(
+        invoice_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        enforce(request, "invoice-remind", 20, 3600, str(user.id))
+        invoice = get_owned_invoice(session, user, invoice_id)
+        if invoice.kind == "credit" or invoice.status in {"paid", "credited"}:
+            raise HTTPException(
+                status_code=409, detail="Alleen een openstaande factuur krijgt een herinnering"
+            )
+        customer = session.get(Customer, invoice.customer_id)
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Klant niet gevonden")
+        _, customer_data = invoice_parties(invoice, user, customer)
+        recipient = (customer.email or customer_data.get("email") or "").strip()
+        if "@" not in recipient:
+            raise HTTPException(
+                status_code=422,
+                detail="Deze klant heeft geen e-mailadres. Zet dat eerst op de klant.",
+            )
+        pdf = invoice_pdf_bytes(session, user, customer, invoice)
+        sent = mailer.send_reminder(
+            sender_name=user.company_name,
+            customer_name=customer_data["name"],
+            customer_email=recipient,
+            invoice_number=invoice.number,
+            total_cents=invoice.total_cents,
+            due_date=invoice.due_date.strftime("%d-%m-%Y"),
+            pdf_bytes=pdf,
+            pdf_filename=f"{invoice_file_prefix(invoice)}-{safe_filename(invoice.number)}.pdf",
+        )
+        if not sent:
+            raise HTTPException(
+                status_code=502,
+                detail="De e-mail kon niet worden verstuurd. Controleer de SMTP-instellingen en probeer het opnieuw.",
+            )
+        invoice.reminder_count += 1
+        invoice.last_reminder_at = utcnow()
+        audit(
+            session,
+            user.id,
+            "invoice.remind",
+            f"{invoice.number} → {recipient}",
+            client_ip(request),
+        )
+        session.commit()
+        return SendInvoiceOutput(
+            sent=True,
+            mode="smtp" if mailer.configured else "log",
+            to=recipient,
+            sent_at=invoice.last_reminder_at,
+        )
+
     @app.patch("/api/invoices/{invoice_id}", response_model=InvoiceOutput)
     def update_invoice_status(
         invoice_id: int,
@@ -2029,11 +2643,29 @@ def create_app(
         session: Session = Depends(get_session),
         user: User = Depends(get_current_user),
     ):
-        return session.scalars(
+        receipts = session.scalars(
             select(Receipt)
             .where(Receipt.owner_id == user.id)
             .order_by(Receipt.receipt_date.desc(), Receipt.id.desc())
         ).all()
+        return [receipt_output(receipt, user) for receipt in receipts]
+
+    @app.get("/api/meta/bookkeeping")
+    def bookkeeping_meta(_: User = Depends(get_current_user)):
+        return {
+            "categories": [
+                {
+                    "key": category.key,
+                    "label": category.label,
+                    "vat_deductible": category.vat_deductible,
+                    "ib_share": float(category.ib_share),
+                    "asset": category.asset,
+                    "hint": category.hint,
+                }
+                for category in EXPENSE_CATEGORIES
+            ],
+            "vat_origins": [{"key": key, "label": label} for key, label in PURCHASE_VAT_ORIGINS.items()],
+        }
 
     @app.post(
         "/api/receipts", response_model=ReceiptOutput, status_code=status.HTTP_201_CREATED
@@ -2046,14 +2678,49 @@ def create_app(
         category: Annotated[str, Form(min_length=1, max_length=60)],
         file: Annotated[UploadFile, File()],
         vat_amount: Annotated[Decimal, Form(ge=0, max_digits=12, decimal_places=2)] = Decimal("0"),
+        vat_origin: Annotated[str, Form()] = "nl",
+        life_years: Annotated[int | None, Form(ge=5, le=30)] = None,
         session: Session = Depends(get_session),
         user: User = Depends(get_current_user),
     ):
         enforce(request, "receipt-upload", 60, 3600, str(user.id))
-        if vat_amount > amount:
+        category_key = LEGACY_CATEGORIES.get(category.strip(), category.strip())
+        if category_key not in CATEGORY_BY_KEY:
+            raise HTTPException(status_code=422, detail="Kies een categorie uit de lijst")
+        if vat_origin not in PURCHASE_VAT_ORIGINS:
+            raise HTTPException(status_code=422, detail="Kies hoe de btw op deze bon is berekend")
+        if vat_origin == "none" and vat_amount:
+            raise HTTPException(status_code=422, detail="Een bon zonder btw heeft geen btw-bedrag")
+        if vat_origin in REVERSE_CHARGE_RUBRICS:
+            # The amount is without Dutch VAT; you declare 21% yourself unless you fill in another amount.
+            if vat_amount == 0:
+                vat_amount = (amount * Decimal("0.21")).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+            if vat_amount > amount * Decimal("0.21") + Decimal("0.01"):
+                raise HTTPException(
+                    status_code=422,
+                    detail="De verlegde btw is hoger dan 21% van het bedrag. Controleer het bedrag.",
+                )
+        elif vat_amount > amount:
             raise HTTPException(
                 status_code=422, detail="De btw kan niet hoger zijn dan het totaalbedrag van de bon"
             )
+        category_rules = CATEGORY_BY_KEY[category_key]
+        if category_rules.asset:
+            if life_years is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Vul in over hoeveel jaar je deze investering afschrijft (minimaal 5)",
+                )
+            net = amount - (vat_amount if vat_origin == "nl" else Decimal("0"))
+            if net < Decimal("450"):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Onder € 450 exclusief btw boek je dit als gewone kosten, niet als investering",
+                )
+        else:
+            life_years = None
         ensure_quarter_open(session, user, receipt_date)
         content_type = file.content_type or ""
         suffix = ALLOWED_RECEIPT_TYPES.get(content_type)
@@ -2085,7 +2752,9 @@ def create_app(
             receipt_date=receipt_date,
             amount_cents=to_cents(amount),
             vat_cents=to_cents(vat_amount),
-            category=category.strip(),
+            vat_origin=vat_origin,
+            category=category_key,
+            life_years=life_years,
             filename=f"{user.id}/{filename}",
             content_type=content_type,
             size_bytes=len(data),
@@ -2098,7 +2767,7 @@ def create_app(
             (directory / filename).unlink(missing_ok=True)
             raise
         session.refresh(receipt)
-        return receipt
+        return receipt_output(receipt, user)
 
     @app.get("/api/receipts/{receipt_id}/file")
     def receipt_file(
@@ -2131,10 +2800,346 @@ def create_app(
             raise HTTPException(status_code=404, detail="Bon niet gevonden")
         ensure_quarter_open(session, user, receipt.receipt_date)
         file_path = (upload_root / receipt.filename).resolve()
+        session.execute(
+            update(BankTransaction)
+            .where(BankTransaction.receipt_id == receipt.id)
+            .values(receipt_id=None, status="open")
+        )
         session.delete(receipt)
         session.commit()
         if upload_root.resolve() in file_path.parents:
             file_path.unlink(missing_ok=True)
+
+    def bank_suggestion(
+        item: BankTransaction,
+        invoices: list[Invoice],
+        receipts: list[Receipt],
+        taken_invoices: set[int],
+        taken_receipts: set[int],
+    ) -> dict | None:
+        if item.status != "open":
+            return None
+        haystack = f"{item.counterparty} {item.description}".lower()
+        if item.amount_cents > 0:
+            candidates = [
+                invoice
+                for invoice in invoices
+                if invoice.kind == "invoice"
+                and invoice.status != "credited"
+                and invoice.total_cents == item.amount_cents
+                and invoice.id not in taken_invoices
+            ]
+            numbered = [invoice for invoice in candidates if invoice.number.lower() in haystack]
+            pool = numbered or [invoice for invoice in candidates if invoice.status != "paid"] or candidates
+            if len(pool) == 1:
+                invoice = pool[0]
+                return {"kind": "invoice", "id": invoice.id, "label": invoice.number}
+            return None
+        amount = -item.amount_cents
+        candidates = [
+            receipt
+            for receipt in receipts
+            if receipt.amount_cents == amount and receipt.id not in taken_receipts
+        ]
+        close = [
+            receipt
+            for receipt in candidates
+            if abs((receipt.receipt_date - item.booking_date).days) <= 14
+        ]
+        pool = close or candidates
+        if len(pool) == 1:
+            receipt = pool[0]
+            return {"kind": "receipt", "id": receipt.id, "label": receipt.vendor}
+        return None
+
+    def get_owned_bank(session: Session, user: User, transaction_id: int) -> BankTransaction:
+        item = session.get(BankTransaction, transaction_id)
+        if item is None or item.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Transactie niet gevonden")
+        return item
+
+    @app.post("/api/bank/import", response_model=BankImportOutput)
+    async def import_bank(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        enforce(request, "bank-import", 20, 3600, str(user.id))
+        max_bytes = settings.max_upload_bytes
+        data = await file.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Het bestand is groter dan {max_bytes // (1024 * 1024)} MB",
+            )
+        if not data:
+            raise HTTPException(status_code=422, detail="Het bestand is leeg")
+        try:
+            lines = parse_statement(data)
+        except StatementError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        invoices = session.scalars(select(Invoice).where(Invoice.owner_id == user.id)).all()
+        receipts = session.scalars(select(Receipt).where(Receipt.owner_id == user.id)).all()
+        existing = {
+            row[0]
+            for row in session.execute(
+                select(BankTransaction.fingerprint).where(BankTransaction.owner_id == user.id)
+            )
+        }
+        taken_invoices = {invoice.id for invoice in invoices if invoice.status == "paid"}
+        taken_receipts = set()
+        for linked in session.scalars(
+            select(BankTransaction).where(
+                BankTransaction.owner_id == user.id,
+                BankTransaction.receipt_id.is_not(None),
+            )
+        ):
+            taken_receipts.add(linked.receipt_id)
+
+        imported = 0
+        duplicates = 0
+        matched = 0
+        seen: dict[str, int] = {}
+        for line in lines:
+            key = "|".join(
+                [
+                    line.booking_date.isoformat(),
+                    str(line.amount_cents),
+                    line.counter_iban,
+                    line.description,
+                    line.reference,
+                ]
+            )
+            seen[key] = seen.get(key, 0) + 1
+            fingerprint = line.fingerprint(seen[key])
+            if fingerprint in existing:
+                duplicates += 1
+                continue
+            item = BankTransaction(
+                owner_id=user.id,
+                fingerprint=fingerprint,
+                booking_date=line.booking_date,
+                amount_cents=line.amount_cents,
+                counterparty=line.counterparty,
+                counter_iban=line.counter_iban,
+                description=line.description,
+            )
+            haystack = f"{item.counterparty} {item.description}".lower()
+            unique_open = [
+                invoice
+                for invoice in invoices
+                if invoice.kind == "invoice"
+                and invoice.status not in {"paid", "credited"}
+                and invoice.total_cents == item.amount_cents
+                and invoice.id not in taken_invoices
+            ]
+            numbered = [invoice for invoice in unique_open if invoice.number.lower() in haystack]
+            match = (numbered[0] if len(numbered) == 1 else None) or (
+                unique_open[0] if len(unique_open) == 1 else None
+            )
+            if match is not None:
+                item.status = "invoice"
+                item.invoice_id = match.id
+                match.status = "paid"
+                match.paid_at = utcnow()
+                taken_invoices.add(match.id)
+                matched += 1
+            session.add(item)
+            existing.add(fingerprint)
+            imported += 1
+        audit(session, user.id, "bank.import", f"{imported} nieuw, {duplicates} al bekend", client_ip(request))
+        session.commit()
+        return BankImportOutput(imported=imported, duplicates=duplicates, matched=matched)
+
+    @app.get("/api/bank/transactions", response_model=list[BankTransactionOutput])
+    def list_bank_transactions(
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        items = session.scalars(
+            select(BankTransaction)
+            .where(BankTransaction.owner_id == user.id)
+            .order_by(BankTransaction.booking_date.desc(), BankTransaction.id.desc())
+        ).all()
+        invoices = session.scalars(select(Invoice).where(Invoice.owner_id == user.id)).all()
+        receipts = session.scalars(select(Receipt).where(Receipt.owner_id == user.id)).all()
+        taken_invoices = {item.invoice_id for item in items if item.invoice_id}
+        taken_receipts = {item.receipt_id for item in items if item.receipt_id}
+        return [
+            BankTransactionOutput(
+                id=item.id,
+                booking_date=item.booking_date,
+                amount_cents=item.amount_cents,
+                counterparty=item.counterparty,
+                counter_iban=item.counter_iban,
+                description=item.description,
+                status=item.status,
+                invoice_id=item.invoice_id,
+                receipt_id=item.receipt_id,
+                suggestion=bank_suggestion(item, invoices, receipts, taken_invoices, taken_receipts),
+            )
+            for item in items
+        ]
+
+    @app.post("/api/bank/transactions/{transaction_id}", response_model=BankTransactionOutput)
+    def classify_bank_transaction(
+        transaction_id: int,
+        payload: BankActionInput,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        item = get_owned_bank(session, user, transaction_id)
+        if payload.action == "invoice":
+            if payload.invoice_id is None:
+                raise HTTPException(status_code=422, detail="Kies de factuur die bij deze betaling hoort")
+            invoice = get_owned_invoice(session, user, payload.invoice_id)
+            if invoice.kind != "invoice" or invoice.status == "credited":
+                raise HTTPException(status_code=409, detail="Deze factuur kan niet aan een betaling worden gekoppeld")
+            item.status = "invoice"
+            item.invoice_id = invoice.id
+            item.receipt_id = None
+            invoice.status = "paid"
+            invoice.paid_at = utcnow()
+        elif payload.action == "receipt":
+            if payload.receipt_id is None:
+                raise HTTPException(status_code=422, detail="Kies de bon die bij deze afschrijving hoort")
+            receipt = session.get(Receipt, payload.receipt_id)
+            if receipt is None or receipt.owner_id != user.id:
+                raise HTTPException(status_code=404, detail="Bon niet gevonden")
+            item.status = "receipt"
+            item.receipt_id = receipt.id
+            item.invoice_id = None
+        elif payload.action in {"private", "ignored", "open"}:
+            item.status = payload.action
+            item.invoice_id = None
+            item.receipt_id = None
+        else:
+            raise HTTPException(status_code=422, detail="Onbekende actie")
+        session.commit()
+        return BankTransactionOutput(
+            id=item.id,
+            booking_date=item.booking_date,
+            amount_cents=item.amount_cents,
+            counterparty=item.counterparty,
+            counter_iban=item.counter_iban,
+            description=item.description,
+            status=item.status,
+            invoice_id=item.invoice_id,
+            receipt_id=item.receipt_id,
+            suggestion=None,
+        )
+
+    def owned_customer_id(session: Session, user: User, customer_id: int | None) -> int | None:
+        if customer_id is None:
+            return None
+        customer = session.get(Customer, customer_id)
+        if customer is None or customer.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Klant niet gevonden")
+        return customer.id
+
+    @app.get("/api/hours", response_model=list[TimeEntryOutput])
+    def list_hours(
+        year: int | None = None,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        query = select(TimeEntry).where(TimeEntry.owner_id == user.id)
+        if year:
+            query = query.where(TimeEntry.entry_date >= date(year, 1, 1), TimeEntry.entry_date <= date(year, 12, 31))
+        entries = session.scalars(query.order_by(TimeEntry.entry_date.desc(), TimeEntry.id.desc())).all()
+        return [time_output(entry) for entry in entries]
+
+    @app.post("/api/hours", response_model=TimeEntryOutput, status_code=201)
+    def create_hours(
+        payload: TimeEntryInput,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        if payload.entry_date > date.today():
+            raise HTTPException(status_code=422, detail="Je kunt geen uren in de toekomst bijhouden")
+        minutes = int((payload.hours * 60).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        day_total = sum(
+            session.scalars(
+                select(TimeEntry.minutes).where(
+                    TimeEntry.owner_id == user.id, TimeEntry.entry_date == payload.entry_date
+                )
+            ).all()
+        )
+        if day_total + minutes > 24 * 60:
+            raise HTTPException(status_code=422, detail="Op één dag kun je maximaal 24 uur registreren")
+        entry = TimeEntry(
+            owner_id=user.id,
+            entry_date=payload.entry_date,
+            minutes=minutes,
+            description=payload.description,
+            customer_id=owned_customer_id(session, user, payload.customer_id),
+        )
+        session.add(entry)
+        session.commit()
+        session.refresh(entry)
+        return time_output(entry)
+
+    @app.delete("/api/hours/{entry_id}", status_code=204)
+    def delete_hours(
+        entry_id: int,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        entry = session.get(TimeEntry, entry_id)
+        if entry is None or entry.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Regel niet gevonden")
+        session.delete(entry)
+        session.commit()
+
+    @app.get("/api/trips", response_model=list[TripOutput])
+    def list_trips(
+        year: int | None = None,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        query = select(Trip).where(Trip.owner_id == user.id)
+        if year:
+            query = query.where(Trip.trip_date >= date(year, 1, 1), Trip.trip_date <= date(year, 12, 31))
+        return session.scalars(query.order_by(Trip.trip_date.desc(), Trip.id.desc())).all()
+
+    @app.post("/api/trips", response_model=TripOutput, status_code=201)
+    def create_trip(
+        payload: TripInput,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        if payload.trip_date > date.today():
+            raise HTTPException(status_code=422, detail="Je kunt geen rit in de toekomst bijhouden")
+        trip = Trip(owner_id=user.id, **payload.model_dump())
+        session.add(trip)
+        session.commit()
+        session.refresh(trip)
+        return trip
+
+    @app.delete("/api/trips/{trip_id}", status_code=204)
+    def delete_trip(
+        trip_id: int,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        trip = session.get(Trip, trip_id)
+        if trip is None or trip.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Rit niet gevonden")
+        session.delete(trip)
+        session.commit()
+
+    @app.get("/api/year", response_model=YearOverviewOutput)
+    def year_overview(
+        year: int | None = None,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        chosen = year or date.today().year
+        if chosen < 2000 or chosen > 2100:
+            raise HTTPException(status_code=422, detail="Ongeldig jaar")
+        return build_year_overview(session, user, chosen)
 
     # -- Static pages -----------------------------------------------------
 

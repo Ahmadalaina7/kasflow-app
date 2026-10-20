@@ -1,0 +1,33 @@
+# systemd-unit voor Kasflow achter Plesk-nginx.
+# 1. Vervang User, WorkingDirectory, EnvironmentFile en ExecStart-paden.
+# 2.   sudo cp plesk/kasflow.service /etc/systemd/system/kasflow.service
+# 3.   sudo systemctl daemon-reload && sudo systemctl enable --now kasflow
+
+[Unit]
+Description=Kasflow boekhoudapp
+After=network.target postgresql.service
+
+[Service]
+Type=notify
+User=REPLACE_PLESK_USER
+Group=psacln
+WorkingDirectory=/var/www/vhosts/app.example.nl/kasflow
+EnvironmentFile=/var/www/vhosts/app.example.nl/kasflow/.env
+ExecStart=/var/www/vhosts/app.example.nl/kasflow/venv/bin/gunicorn app:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --chdir backend \
+    --bind 127.0.0.1:8010 \
+    --workers 1 \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1 \
+    --access-logfile - \
+    --error-logfile -
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Bonnetjes tot 12 MB, boven de app-limiet van 10 MB.
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

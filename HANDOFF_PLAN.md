@@ -156,9 +156,9 @@ tijdelijke SQLite-database en een opname-mailer in plaats van echte SMTP.
 ## Grenzen en vervolgstappen
 
 - **Aangifte**: het btw-overzicht rekent per aangifterubriek met voorbelasting
-  uit bonnetjes, maar zonder naar de gebruiker verlegde btw (2a/4), privégebruik
-  of suppleties, en dient niet zelf in. Direct indienen vraagt SBR/Digipoort met
-  een PKIoverheid-certificaat.
+  en verlegde btw op inkopen (2a/4a/4b), maar zonder privégebruik of suppleties,
+  en dient niet zelf in. Het jaaroverzicht schat de inkomstenbelasting voor een
+  eenmanszaak zonder ander box 1-inkomen. Direct indienen vraagt SBR/Digipoort.
 - **Facturen zijn onveranderlijk**: correcties lopen via `POST
   /api/invoices/{id}/credit`; partijgegevens staan als JSON-snapshot op de
   factuur (`supplier_snapshot`, `customer_snapshot`).

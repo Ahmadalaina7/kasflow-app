@@ -35,13 +35,18 @@
       </div>
     </div>
 
-    <div class="alert warning">
-      <div><strong>Hulpmiddel voor je aangifte.</strong> De bedragen komen uit je facturen (factuurdatum) en de btw op je bonnetjes.
-      Btw die naar jou is verlegd (rubriek 2a/4), privégebruik en suppleties staan hier niet in. Je dient de aangifte zelf in
-      via Mijn Belastingdienst Zakelijk; in de aangifte vul je hele euro's in.</div>
+    <div class="alert">
+      <div><strong>Dit is je kwartaalaangifte omzetbelasting.</strong> Neem de hele euro's hieronder over in
+      Mijn Belastingdienst Zakelijk. De bedragen komen uit je facturen (factuurdatum) en je bonnetjes, inclusief
+      btw die naar jou is verlegd (Google, EU-leveranciers, rubriek 2a/4). Privégebruik en een suppletie vullen
+      je zelf in als die voorkomen. Kasflow dient niet zelf in.</div>
     </div>
 
     <p id="vat-feedback" class="form-note" role="status" aria-live="polite"></p>
+    <section class="panel" id="check-panel" hidden>
+      <div class="panel-head"><h2>Controle voor je aangifte</h2></div>
+      <div class="toggle-list" id="check-list"></div>
+    </section>
 
     <div class="metric-grid">
       <div class="metric-card accent">
@@ -50,7 +55,7 @@
         <div class="metric-meta" id="vat-due-meta">—</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Btw op je facturen − voorbelasting</div>
+        <div class="metric-label">Verschuldigd − voorbelasting</div>
         <div class="metric-value" id="vat-split">—</div>
         <div class="metric-meta" id="vat-split-meta">—</div>
       </div>
@@ -69,14 +74,31 @@
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>Rubriek</th><th>Omschrijving</th><th style="text-align:right">Omzet</th><th style="text-align:right">Btw</th></tr>
+            <tr><th>Rubriek</th><th>Omschrijving</th><th style="text-align:right">Grondslag</th><th style="text-align:right">Btw</th></tr>
           </thead>
           <tbody id="rubric-body"></tbody>
         </table>
       </div>
       <p class="vat-disclaimer" id="vat-extra"></p>
       <p class="vat-disclaimer">Deadline voor deze periode: <strong id="rate-deadline">—</strong>.
-      Zorg dat je administratie rond is voordat je aangifte doet.</p>
+      In de aangifte vul je hele euro's in (verschuldigde btw naar beneden, voorbelasting naar boven).</p>
+    </section>
+
+    <section class="panel" id="icp-panel" hidden>
+      <div class="panel-head">
+        <h2>Opgaaf ICP</h2>
+        <span class="pill muted">verplicht bij rubriek 3b</span>
+      </div>
+      <p class="vat-disclaimer">Heb je omzet in rubriek 3b, dan doe je naast de btw-aangifte ook de opgaaf
+      intracommunautaire prestaties. Neem per afnemer het btw-id en de omzet over.</p>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Btw-id afnemer</th><th>Naam</th><th>Land</th><th style="text-align:right">Omzet</th></tr>
+          </thead>
+          <tbody id="icp-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <section class="panel">
@@ -119,19 +141,26 @@
 
   function render() {
     const quarter = overview.quarters[selected];
-    const refund = quarter.payable_cents < 0;
+    const refund = (quarter.form_total_euros || 0) < 0;
 
     document.getElementById('vat-due-label').textContent = quarter.kor
       ? 'Kleineondernemersregeling'
       : (refund ? 'Terug te vragen' : 'Te betalen') + ' over ' + quarter.label;
-    document.getElementById('vat-due').textContent = quarter.kor ? '€ 0,00' : money(Math.abs(quarter.payable_cents));
+    const formTotal = (quarter.form_total_euros || 0) * 100;
+    document.getElementById('vat-due').textContent = quarter.kor ? '€ 0' : euro(Math.abs(quarter.form_total_euros || 0));
     document.getElementById('vat-due-meta').textContent = quarter.kor
       ? 'Je hoeft onder de KOR geen aangifte te doen'
       : quarter.invoice_count + (quarter.invoice_count === 1 ? ' factuur' : ' facturen') + ' en ' +
-        quarter.receipt_count + (quarter.receipt_count === 1 ? ' bon' : ' bonnen');
-    document.getElementById('vat-split').textContent = money(quarter.vat_cents) + ' − ' + money(quarter.input_vat_cents);
+        quarter.receipt_count + (quarter.receipt_count === 1 ? ' bon' : ' bonnen') +
+        ' · over te nemen in hele euro’s';
+    document.getElementById('vat-split').textContent =
+      money((quarter.vat_cents || 0) + (quarter.reverse_charge_vat_cents || 0)) +
+      ' − ' + money(quarter.input_vat_cents);
     document.getElementById('vat-split-meta').textContent = quarter.label + ' · ' +
-      formatShortDate(quarter.start_date) + ' t/m ' + formatShortDate(quarter.end_date);
+      formatShortDate(quarter.start_date) + ' t/m ' + formatShortDate(quarter.end_date) +
+      (formTotal !== quarter.payable_cents && !quarter.kor
+        ? ' · aangifte ' + euro(quarter.form_total_euros) + ' door afronding'
+        : '');
 
     const approved = Boolean(quarter.approved_at);
     document.getElementById('vat-status').innerHTML = approved
@@ -147,31 +176,47 @@
     document.getElementById('rate-title').textContent = 'Aangifte omzetbelasting — ' + quarter.label;
     document.getElementById('rate-deadline').textContent = formatShortDate(quarter.deadline);
 
-    const rubricRows = quarter.rubrics.map(rubric =>
-      '<tr>' +
-      '<td data-label="Rubriek" class="row-name">' + escapeHtml(rubric.code) + '</td>' +
-      '<td data-label="Omschrijving">' + escapeHtml(rubric.label) + '</td>' +
-      '<td data-label="Omzet" class="amount" style="text-align:right">' + money(rubric.net_cents) + '</td>' +
-      '<td data-label="Btw" class="amount" style="text-align:right">' + (['1a', '1b', '1c'].includes(rubric.code) ? money(rubric.vat_cents) : '') + '</td>' +
-      '</tr>'
-    );
-    rubricRows.push(
-      '<tr><td data-label="Rubriek" class="row-name">5a</td><td data-label="Omschrijving">Verschuldigde omzetbelasting</td><td></td>' +
-      '<td data-label="Btw" class="amount" style="text-align:right">' + money(quarter.vat_cents) + '</td></tr>',
-      '<tr><td data-label="Rubriek" class="row-name">5b</td><td data-label="Omschrijving">Voorbelasting (btw op je bonnetjes)</td><td></td>' +
-      '<td data-label="Btw" class="amount" style="text-align:right">' + money(quarter.input_vat_cents) + '</td></tr>',
-      '<tr><td data-label="Rubriek" class="row-name">5c</td><td data-label="Omschrijving"><strong>' + (refund ? 'Terug te vragen' : 'Te betalen') + '</strong></td><td></td>' +
-      '<td data-label="Btw" class="amount" style="text-align:right"><strong>' + money(Math.abs(quarter.payable_cents)) + '</strong></td></tr>'
-    );
-    document.getElementById('rubric-body').innerHTML = rubricRows.join('');
+    const lines = quarter.form || [];
+    document.getElementById('rubric-body').innerHTML = lines.map(line => {
+      const isTotal = line.code === '5c';
+      return '<tr' + (isTotal ? ' class="row-selected"' : '') + '>' +
+        '<td data-label="Rubriek" class="row-name">' + escapeHtml(line.code) + '</td>' +
+        '<td data-label="Omschrijving">' + (isTotal ? '<strong>' + escapeHtml(line.label) + '</strong>' : escapeHtml(line.label)) + '</td>' +
+        '<td data-label="Grondslag" class="amount" style="text-align:right">' +
+          (line.base_euros == null ? '' : euro(line.base_euros)) + '</td>' +
+        '<td data-label="Btw" class="amount" style="text-align:right">' +
+          (line.vat_euros == null ? '' : (isTotal ? '<strong>' + euro(line.vat_euros) + '</strong>' : euro(line.vat_euros))) +
+        '</td></tr>';
+    }).join('');
 
     const extra = [];
-    const intraEu = quarter.rubrics.find(rubric => rubric.code === '3b');
-    if (intraEu && intraEu.net_cents) extra.push('Je hebt omzet in rubriek 3b: doe ook de opgaaf intracommunautaire prestaties (ICP).');
-    const exported = quarter.rubrics.find(rubric => rubric.code === '3a');
-    if (exported && exported.net_cents) extra.push('Rubriek 3a is voor goederen. Diensten aan ondernemers buiten de EU neem je niet op in de aangifte.');
-    if (quarter.kor) extra.push('Onder de KOR trek je geen voorbelasting af.');
+    const formBy = Object.fromEntries(lines.map(line => [line.code, line]));
+    if (formBy['3b'] && formBy['3b'].base_euros) extra.push('Je hebt omzet in rubriek 3b: doe ook de opgaaf ICP hieronder.');
+    if (formBy['3a'] && formBy['3a'].base_euros) extra.push('Rubriek 3a is voor goederen. Diensten aan ondernemers buiten de EU neem je niet op in de aangifte.');
+    if ((formBy['4a'] && formBy['4a'].base_euros) || (formBy['4b'] && formBy['4b'].base_euros) || (formBy['2a'] && formBy['2a'].base_euros)) {
+      extra.push('Verlegde btw op inkopen (Google, EU-facturen, bouw) staat in 2a/4a/4b én in 5b, als je dat bij de bon hebt aangegeven.');
+    }
+    if (quarter.kor) extra.push('Onder de KOR doe je geen aangifte en trek je geen voorbelasting af.');
     document.getElementById('vat-extra').textContent = extra.join(' ');
+
+    const icp = quarter.icp || [];
+    const checks = quarter.checks || [];
+    document.getElementById('check-panel').hidden = checks.length === 0;
+    document.getElementById('check-list').innerHTML = checks.map(item =>
+      '<div class="toggle-item"><span><strong>' + (item.ok ? 'In orde' : 'Nog doen') + '</strong>' +
+      '<small>' + escapeHtml(item.label) + (item.href && !item.ok ? ' · <a href="' + escapeHtml(item.href) + '">Openen</a>' : '') +
+      '</small></span></div>'
+    ).join('');
+
+    document.getElementById('icp-panel').hidden = icp.length === 0;
+    document.getElementById('icp-body').innerHTML = icp.map(row =>
+      '<tr>' +
+      '<td data-label="Btw-id" class="row-name">' + escapeHtml(row.vat_number) + '</td>' +
+      '<td data-label="Naam">' + escapeHtml(row.name) + '</td>' +
+      '<td data-label="Land">' + escapeHtml(row.country) + '</td>' +
+      '<td data-label="Omzet" class="amount" style="text-align:right">' + money(row.net_cents) + '</td>' +
+      '</tr>'
+    ).join('');
 
     document.getElementById('vat-table-body').innerHTML = overview.quarters.map((item, index) =>
       '<tr' + (index === selected ? ' class="row-selected"' : '') + '>' +
@@ -193,7 +238,14 @@
 
     summary.textContent = quarter.kor
       ? quarter.label + ': je valt onder de kleineondernemersregeling.'
-      : quarter.label + ': ' + balanceText(quarter.payable_cents) + ' (deadline ' + formatShortDate(quarter.deadline) + ').';
+      : quarter.label + ': ' + (quarter.form_total_euros < 0
+        ? euro(-quarter.form_total_euros) + ' terug'
+        : euro(quarter.form_total_euros) + ' te betalen') +
+        ' (deadline ' + formatShortDate(quarter.deadline) + ').';
+  }
+
+  function euro(value) {
+    return money((Number(value) || 0) * 100).replace(',00', '');
   }
 
   async function loadVat() {

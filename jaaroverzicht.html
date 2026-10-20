@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Jaaroverzicht</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="jaaroverzicht">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Jaaroverzicht</h1>
+        <div class="topbar-sub" id="year-summary">Winst, aftrekposten en wat je opzij zet voor de inkomstenbelasting.</div>
+      </div>
+      <div class="topbar-actions">
+        <select id="year-select" class="field-control" style="width:auto" aria-label="Jaar"></select>
+        <button type="button" class="btn btn-outline" id="year-print">Afdrukken</button>
+      </div>
+    </div>
+
+    <div class="alert">
+      <div><strong>Voor je aangifte inkomstenbelasting (eenmaal per jaar).</strong> Neem de winst uit onderneming
+      over in Mijn Belastingdienst. Dit is een schatting voor een eenmanszaak zonder ander inkomen of eigen woning.
+      Kasflow dient deze aangifte niet zelf in.</div>
+    </div>
+    <p id="year-feedback" class="form-note" role="status" aria-live="polite"></p>
+
+    <div class="metric-grid">
+      <div class="metric-card accent">
+        <div class="metric-label">Winst</div>
+        <div class="metric-value" id="year-profit">—</div>
+        <div class="metric-meta" id="year-profit-meta">omzet − kosten − afschrijving − KIA</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">IB + Zvw dit jaar</div>
+        <div class="metric-value" id="year-tax">—</div>
+        <div class="metric-meta" id="year-tax-meta">schatting</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Zet maandelijks opzij</div>
+        <div class="metric-value" id="year-reserve">—</div>
+        <div class="metric-meta">zodat de aanslag geen verrassing is</div>
+      </div>
+    </div>
+
+    <div class="panel-grid">
+      <section class="panel">
+        <div class="panel-head"><h2>Winst-en-verlies</h2></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <tbody id="pnl-body"></tbody>
+          </table>
+        </div>
+        <p class="vat-disclaimer" id="year-note"></p>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>Aftrek en belasting</h2></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <tbody id="tax-body"></tbody>
+          </table>
+        </div>
+        <p class="vat-disclaimer" id="hours-note"></p>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Kosten per categorie</h2></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Categorie</th><th style="text-align:right">Bedrag</th></tr></thead>
+          <tbody id="cat-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="asset-panel" hidden>
+      <div class="panel-head"><h2>Investeringen en afschrijving</h2></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Bedrijfsmiddel</th><th>Datum</th><th>Looptijd</th><th style="text-align:right">Aanschaf</th><th style="text-align:right">Dit jaar</th></tr></thead>
+          <tbody id="asset-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { api, money, formatShortDate, note, escapeHtml } = Kasflow;
+  const feedback = document.getElementById('year-feedback');
+  const select = document.getElementById('year-select');
+  const thisYear = new Date().getFullYear();
+  for (let year = thisYear; year >= thisYear - 4; year -= 1) {
+    const option = document.createElement('option');
+    option.value = String(year);
+    option.textContent = String(year);
+    select.append(option);
+  }
+
+  function row(label, cents, strong) {
+    const amount = money(cents);
+    return '<tr><td data-label="Post"' + (strong ? ' class="row-name"' : '') + '>' +
+      (strong ? '<strong>' + label + '</strong>' : label) + '</td>' +
+      '<td data-label="Bedrag" class="amount" style="text-align:right">' +
+      (strong ? '<strong>' + amount + '</strong>' : amount) + '</td></tr>';
+  }
+
+  function render(data) {
+    document.getElementById('year-profit').textContent = money(data.profit_cents);
+    document.getElementById('year-profit-meta').textContent = 'Omzet ' + money(data.revenue_cents);
+    document.getElementById('year-tax').textContent = money(data.total_tax_cents);
+    document.getElementById('year-tax-meta').textContent = 'IB ' + money(data.income_tax_cents) + ' + Zvw ' + money(data.zvw_cents);
+    document.getElementById('year-reserve').textContent = money(data.monthly_reserve_cents);
+    document.getElementById('year-summary').textContent = data.year + ': winst ' + money(data.profit_cents) +
+      ', zet ' + money(data.monthly_reserve_cents) + ' per maand opzij.';
+    document.getElementById('year-note').textContent = data.note;
+    const hours = (data.hours_minutes / 60).toLocaleString('nl-NL', { maximumFractionDigits: 1 });
+    document.getElementById('hours-note').innerHTML = data.hours_met
+      ? 'Urencriterium gehaald (' + hours + ' uur). Zelfstandigenaftrek is meegenomen.'
+      : hours + ' van ' + data.hours_criterion.toLocaleString('nl-NL') +
+        ' uur. <a href="uren.html">Schrijf je uren</a> tot je op 1.225 zit, anders vervalt de zelfstandigenaftrek.';
+
+    document.getElementById('pnl-body').innerHTML =
+      row('Omzet (excl. btw)', data.revenue_cents) +
+      row('Kosten', -data.costs_cents) +
+      row('Afschrijving', -data.depreciation_cents) +
+      row('Kilometers', -data.mileage_cents) +
+      row('Kleinschaligheidsinvesteringsaftrek', -data.kia_cents) +
+      row('Winst uit onderneming', data.profit_cents, true);
+
+    document.getElementById('tax-body').innerHTML =
+      row('Zelfstandigenaftrek', -data.self_employed_deduction) +
+      row('Startersaftrek', -data.starter_deduction) +
+      row('Mkb-winstvrijstelling', -data.mkb_exemption) +
+      row('Belastbare winst', data.taxable_profit, true) +
+      row('Inkomstenbelasting', data.income_tax_cents) +
+      row('Zvw-bijdrage', data.zvw_cents) +
+      row('Totaal opzij te zetten', data.total_tax_cents, true);
+
+    document.getElementById('cat-body').innerHTML = data.categories.length
+      ? data.categories.map(item =>
+        '<tr><td data-label="Categorie" class="row-name">' + escapeHtml(item.label) + '</td>' +
+        '<td data-label="Bedrag" class="amount" style="text-align:right">' + money(item.cents) + '</td></tr>'
+      ).join('')
+      : '<tr class="empty-row"><td colspan="2">Nog geen kosten dit jaar.</td></tr>';
+
+    document.getElementById('asset-panel').hidden = data.assets.length === 0;
+    document.getElementById('asset-body').innerHTML = data.assets.map(item =>
+      '<tr><td data-label="Bedrijfsmiddel" class="row-name">' + escapeHtml(item.vendor) + '</td>' +
+      '<td data-label="Datum">' + formatShortDate(item.receipt_date) + '</td>' +
+      '<td data-label="Looptijd">' + item.life_years + ' jaar</td>' +
+      '<td data-label="Aanschaf" class="amount" style="text-align:right">' + money(item.cost_cents) + '</td>' +
+      '<td data-label="Dit jaar" class="amount" style="text-align:right">' + money(item.depreciation_cents) + '</td></tr>'
+    ).join('');
+  }
+
+  async function load() {
+    try {
+      const data = await api('/api/year?year=' + select.value);
+      render(data);
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    }
+  }
+
+  select.addEventListener('change', load);
+  document.getElementById('year-print').addEventListener('click', () => window.print());
+  Kasflow.ready.then(load);
+})();
+</script>
+</body>
+</html>
