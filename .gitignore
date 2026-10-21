@@ -4,7 +4,9 @@ __pycache__/
 backend/*.sqlite3
 backend/*.sqlite3-shm
 backend/*.sqlite3-wal
+backend/*.sqlite3-journal
 backend/uploads/
+backend/.kasflow-secret
 .env
 .env.*
 !.env.example

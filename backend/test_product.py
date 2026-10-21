@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app import create_app
+from billing import MollieClient
 from mailer import Mailer, MailSettings
 
 
@@ -792,6 +793,9 @@ def test_health_security_headers_and_public_pages(tmp_path):
     assert client.get("/sw.js").status_code == 200
     assert client.get("/sw.js").headers["service-worker-allowed"] == "/"
     assert client.get("/backup.sqlite3").status_code == 404
+    favicon = client.get("/favicon.ico")
+    assert favicon.status_code == 200
+    assert favicon.headers["content-type"].startswith("image/svg+xml")
 
 
 WEB_ROOT = Path(__file__).resolve().parents[1]
@@ -902,3 +906,238 @@ def test_receipt_pdf_is_read_automatically(tmp_path):
     assert payload["receipt_date"] == "2026-03-15"
     assert payload["amount"] == 121.0
     assert payload["vat_amount"] == 21.0
+
+def test_development_signing_key_survives_restarts(tmp_path, monkeypatch):
+    """Zonder vaste sleutel maakt elke herstart alle sessies ongeldig."""
+    import config
+
+    secret_file = tmp_path / ".kasflow-secret"
+    monkeypatch.setattr(config, "DEV_SECRET_FILE", secret_file)
+    monkeypatch.delenv("KASFLOW_SECRET_KEY", raising=False)
+    monkeypatch.setenv("KASFLOW_ENV", "development")
+
+    first = config.Settings.from_environment().secret_key
+    assert len(first) >= 32
+    assert secret_file.read_text(encoding="utf-8").strip() == first
+    # Een tweede start (of een herstart van de server) gebruikt dezelfde sleutel.
+    assert config.Settings.from_environment().secret_key == first
+
+
+def test_production_never_stores_a_signing_key_on_disk(tmp_path, monkeypatch):
+    import config
+
+    secret_file = tmp_path / ".kasflow-secret"
+    monkeypatch.setattr(config, "DEV_SECRET_FILE", secret_file)
+    monkeypatch.delenv("KASFLOW_SECRET_KEY", raising=False)
+    monkeypatch.setenv("KASFLOW_ENV", "production")
+
+    settings = config.Settings.from_environment()
+    assert settings.secret_key == ""
+    assert not secret_file.exists()
+
+
+def test_login_session_still_works_after_a_restart(tmp_path):
+    """Een herstart van de server mag een ingelogde gebruiker niet uitloggen."""
+    from config import Settings
+
+    database = tmp_path / "restart.sqlite3"
+    settings = Settings(
+        env="development",
+        secret_key="s" * 48,
+        database_url=f"sqlite:///{database.as_posix()}",
+        upload_dir=tmp_path / "uploads",
+    )
+
+    first = TestClient(create_app(settings=settings))
+    assert first.post(
+        "/api/auth/register",
+        json={
+            "email": "herstart@example.nl",
+            "password": "wachtwoord-van-12",
+            "company_name": "Herstart BV",
+            "kvk_number": "12345678",
+            "terms": True,
+        },
+    ).status_code == 201
+    assert first.get("/api/auth/me").status_code == 200
+
+    second = TestClient(create_app(settings=settings))
+    second.cookies.update(first.cookies)
+    assert second.get("/api/auth/me").status_code == 200
+    assert second.get("/api/auth/me").json()["email"] == "herstart@example.nl"
+
+def test_homepage_offers_login_on_mobile_as_well(tmp_path):
+    """Op smalle schermen verbergt de header-CTA, dus het menu moet Inloggen hebben."""
+    client = client_for(tmp_path)
+    page = client.get("/index.html")
+    assert page.status_code == 200
+    html = page.text
+    assert "nav-login" in html
+    drawer = html.split('class="nav-drawer"', 1)[1].split("</div>", 1)[0]
+    assert "login.html" in drawer
+    assert "signup.html" in drawer
+
+class FakeMollie(MollieClient):
+    """Mollie zonder netwerk: dezelfde interface, voorspelbare antwoorden."""
+
+    def __init__(self):
+        super().__init__("test_fake_key")
+        self.customers: list[str] = []
+        self.payments: dict[str, dict] = {}
+        self.subscriptions: list[dict] = []
+        self.cancelled: list[str] = []
+
+    def create_customer(self, *, name, email, company_id):
+        customer_id = f"cst_{len(self.customers) + 1}"
+        self.customers.append(customer_id)
+        return customer_id
+
+    def create_first_payment(self, *, customer_id, plan, company_id, redirect_url, webhook_url):
+        payment_id = f"tr_{len(self.payments) + 1}"
+        self.payments[payment_id] = {
+            "id": payment_id,
+            "status": "open",
+            "sequenceType": "first",
+            "customerId": customer_id,
+            "metadata": {"company_id": company_id, "plan": plan.key},
+            "_links": {"checkout": {"href": f"https://mollie.test/checkout/{payment_id}"}},
+        }
+        return self.payments[payment_id]
+
+    def list_mandates(self, customer_id):
+        return [{"id": "mdt_1", "status": "valid", "customerId": customer_id}]
+
+    def create_subscription(self, *, customer_id, plan, start_date, webhook_url):
+        subscription = {
+            "id": f"sub_{len(self.subscriptions) + 1}",
+            "customerId": customer_id,
+            "plan": plan.key,
+            "startDate": start_date.isoformat(),
+        }
+        self.subscriptions.append(subscription)
+        return subscription
+
+    def cancel_subscription(self, customer_id, subscription_id):
+        self.cancelled.append(subscription_id)
+
+    def get_payment(self, payment_id):
+        return self.payments[payment_id]
+
+    def pay(self, payment_id):
+        self.payments[payment_id]["status"] = "paid"
+
+
+def billing_client_for(tmp_path, mollie=None):
+    database = tmp_path / "billing.sqlite3"
+    return (
+        TestClient(
+            create_app(
+                f"sqlite:///{database.as_posix()}",
+                mailer=None,
+                upload_dir=tmp_path / "uploads",
+                billing=mollie,
+            )
+        ),
+        database,
+    )
+
+
+def test_new_account_starts_with_a_fourteen_day_trial(tmp_path):
+    client, _ = billing_client_for(tmp_path)
+    register(client)
+    billing = client.get("/api/billing")
+    assert billing.status_code == 200
+    data = billing.json()
+    assert data["status"] == "trialing"
+    assert data["can_write"] is True
+    assert 13 <= data["days_left"] <= 14
+    assert data["provider_ready"] is False
+    assert {plan["key"] for plan in data["plans"]} == {"starter", "groei", "onderneming"}
+    assert {plan["cents"] for plan in data["plans"]} == {1900, 3900, 7900}
+
+
+def test_checkout_without_payment_provider_explains_itself(tmp_path):
+    client, _ = billing_client_for(tmp_path)
+    register(client)
+    response = client.post("/api/billing/checkout", json={"plan": "starter"})
+    assert response.status_code == 503
+    assert "Mollie" in response.json()["detail"]
+
+
+def test_ideal_checkout_then_webhook_activates_the_subscription(tmp_path):
+    mollie = FakeMollie()
+    client, _ = billing_client_for(tmp_path, mollie)
+    register(client)
+
+    checkout = client.post("/api/billing/checkout", json={"plan": "groei"})
+    assert checkout.status_code == 200
+    payload = checkout.json()
+    assert payload["checkout_url"].startswith("https://mollie.test/checkout/")
+    assert mollie.customers
+
+    payment_id = payload["payment_id"]
+    mollie.pay(payment_id)
+    # Mollie stuurt alleen een id; de status komt uit de opgehaalde betaling.
+    assert client.post("/api/billing/webhook", data={"id": payment_id}).status_code == 200
+
+    billing = client.get("/api/billing").json()
+    assert billing["status"] == "active"
+    assert billing["plan"] == "groei"
+    assert billing["can_write"] is True
+    assert billing["current_period_end"] is not None
+    assert mollie.subscriptions[0]["plan"] == "groei"
+
+
+def test_expired_trial_blocks_writing_but_keeps_reading_and_export(tmp_path):
+    import sqlite3
+
+    client, database = billing_client_for(tmp_path)
+    register(client)
+    assert client.post(
+        "/api/customers", json={"name": "Klant", "country": "Nederland"}
+    ).status_code == 201
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE subscriptions SET status = 'trialing', trial_ends_at = '2020-01-01 00:00:00.000000'"
+        )
+
+    status = client.get("/api/billing").json()
+    assert status["status"] == "trial_expired"
+    assert status["can_write"] is False
+
+    blocked = client.post("/api/customers", json={"name": "Te laat", "country": "Nederland"})
+    assert blocked.status_code == 402
+    assert "proefperiode" in blocked.json()["detail"].lower()
+
+    assert client.get("/api/customers").status_code == 200
+    assert client.get("/api/account/export").status_code == 200
+    # Eigen gegevens bijwerken is geen boeking en moet altijd kunnen.
+    profile = client.patch(
+        "/api/auth/me",
+        json={
+            "company_name": "Nieuwe naam",
+            "kvk_number": "12345678",
+            "city": "Utrecht",
+        },
+    )
+    assert profile.status_code == 200
+    assert profile.json()["city"] == "Utrecht"
+
+
+def test_cancelling_keeps_access_until_the_period_ends(tmp_path):
+    mollie = FakeMollie()
+    client, _ = billing_client_for(tmp_path, mollie)
+    register(client)
+    payload = client.post("/api/billing/checkout", json={"plan": "starter"}).json()
+    mollie.pay(payload["payment_id"])
+    client.post("/api/billing/webhook", data={"id": payload["payment_id"]})
+
+    assert client.post("/api/billing/cancel").status_code == 204
+    assert mollie.cancelled
+
+    billing = client.get("/api/billing").json()
+    assert billing["status"] == "canceled"
+    assert billing["can_write"] is True
+    assert billing["days_left"] >= 0
+

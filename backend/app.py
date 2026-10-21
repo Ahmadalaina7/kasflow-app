@@ -68,6 +68,18 @@ from access import (
     role_label,
     write_permission_for,
 )
+from billing import (
+    DEFAULT_PLAN,
+    GRACE_DAYS,
+    PLANS,
+    TRIAL_DAYS,
+    BillingError,
+    MollieClient,
+    add_month,
+    checkout_link,
+    plan_of,
+    state_for,
+)
 from bank_import import StatementError, parse_statement
 from config import Settings
 from invoice_pdf import InvoiceLineData, InvoicePdfData, Party, build_invoice_pdf
@@ -218,6 +230,34 @@ class Company(Base):
     ib_hours_criterion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Subscription(Base):
+    """Proefperiode of betaald abonnement van één bedrijf.
+
+    De status is een letterlijke tekst (trialing, active, past_due, canceled) en
+    niet een afgeleide van datums, zodat een mislukte incasso zichtbaar blijft
+    tot iemand hem oplost.
+    """
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id"), nullable=False, unique=True
+    )
+    plan: Mapped[str] = mapped_column(String(20), default=DEFAULT_PLAN, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="trialing", nullable=False)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    mollie_customer_id: Mapped[str | None] = mapped_column(String(50))
+    mollie_subscription_id: Mapped[str | None] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
 
 
 class Membership(Base):
@@ -546,6 +586,39 @@ class CompanyCreateInput(BaseModel):
 
 class CompanySelectInput(BaseModel):
     company_id: int
+
+
+class CheckoutInput(BaseModel):
+    plan: str = DEFAULT_PLAN
+
+    @field_validator("plan")
+    @classmethod
+    def known_plan(cls, value: str) -> str:
+        key = (value or "").strip().lower()
+        if key not in PLANS:
+            raise ValueError("Kies een bestaand abonnement")
+        return key
+
+
+class BillingPlanOutput(BaseModel):
+    key: str
+    label: str
+    cents: int
+    description: str
+
+
+class BillingOutput(BaseModel):
+    plan: str
+    plan_label: str
+    status: str
+    trial_ends_at: datetime | None
+    current_period_end: datetime | None
+    can_write: bool
+    days_left: int
+    provider_ready: bool
+    message: str
+    mode: str = "off"
+    plans: list[BillingPlanOutput] = []
 
 
 class InviteInput(BaseModel):
@@ -1119,6 +1192,7 @@ def create_app(
     settings: Settings | None = None,
     mailer: Mailer | None = None,
     upload_dir: Path | None = None,
+    billing: MollieClient | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
     if database_url:
@@ -1163,6 +1237,7 @@ def create_app(
     session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
     mailer = mailer or Mailer()
+    billing_client = billing or MollieClient(settings.mollie_api_key)
     upload_root = Path(settings.upload_dir)
     upload_root.mkdir(parents=True, exist_ok=True)
     limiter = RateLimiter()
@@ -1187,6 +1262,7 @@ def create_app(
     app = FastAPI(title="Kasflow API", version="2.0.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.mailer = mailer
+    app.state.billing = billing_client
     app.state.limiter = limiter
     app.state.web_root = web_root
     app.state.upload_root = upload_root
@@ -1298,6 +1374,33 @@ def create_app(
             raise HTTPException(status_code=409, detail="Kies eerst een bedrijf")
         return int(value)
 
+    def subscription_for(session: Session, company_id: int) -> Subscription:
+        sub = session.scalar(
+            select(Subscription).where(Subscription.company_id == company_id)
+        )
+        if sub is None:
+            sub = Subscription(
+                company_id=company_id,
+                plan=DEFAULT_PLAN,
+                status="trialing",
+                trial_ends_at=utcnow() + timedelta(days=TRIAL_DAYS),
+            )
+            session.add(sub)
+            session.commit()
+            session.refresh(sub)
+        return sub
+
+    def billing_status(session: Session, company_id: int):
+        sub = subscription_for(session, company_id)
+        state = state_for(
+            plan=sub.plan,
+            status=sub.status,
+            trial_ends_at=sub.trial_ends_at,
+            current_period_end=sub.current_period_end,
+            provider_ready=billing_client.configured,
+        )
+        return state, sub
+
     def require_perm(user: User, permission: str) -> None:
         role = getattr(user, "_role", "kijker")
         if not has_permission(role, permission):
@@ -1345,10 +1448,10 @@ def create_app(
             request.session.clear()
             raise HTTPException(status_code=401, detail="Je sessie is verlopen. Log opnieuw in.")
         activate_company(session, request, user, request.session.get("company_id"))
-        _gate_write(request, user)
+        _gate_write(request, user, session)
         return user
 
-    def _gate_write(request: Request, user: User) -> None:
+    def _gate_write(request: Request, user: User, session: Session) -> None:
         if request.method in {"GET", "HEAD", "OPTIONS"}:
             return
         path = request.url.path
@@ -1361,6 +1464,20 @@ def create_app(
         permission = write_permission_for(path, request.method)
         if permission:
             require_perm(user, permission)
+        if path.startswith("/api/billing") or path == "/api/auth/me":
+            # Een abonnement afsluiten en je eigen gegevens bijwerken moeten altijd
+            # kunnen, ook als de proefperiode voorbij is.
+            return
+        # Na de proefperiode blijft lezen en exporteren mogelijk; boeken niet.
+        state, _ = billing_status(session, tenant_id(user))
+        if not state.can_write:
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    "Je proefperiode is afgelopen. Kies een abonnement onder Instellingen "
+                    "om verder te boeken. Je gegevens blijven staan en exporteren kan altijd."
+                ),
+            )
 
     def start_session(request: Request, user: User, session: Session | None = None) -> None:
         request.session.clear()
@@ -1957,6 +2074,14 @@ def create_app(
         session.add(company)
         session.flush()
         session.add(Membership(user_id=user.id, company_id=company.id, role="owner"))
+        session.add(
+            Subscription(
+                company_id=company.id,
+                plan=DEFAULT_PLAN,
+                status="trialing",
+                trial_ends_at=utcnow() + timedelta(days=TRIAL_DAYS),
+            )
+        )
         audit(session, user.id, "account.register", None, client_ip(request))
         session.commit()
         session.refresh(user)
@@ -2420,6 +2545,7 @@ def create_app(
             session.execute(delete(Customer).where(Customer.company_id == company_id))
             session.execute(delete(TeamInvite).where(TeamInvite.company_id == company_id))
             session.execute(delete(Membership).where(Membership.company_id == company_id))
+            session.execute(delete(Subscription).where(Subscription.company_id == company_id))
             company = session.get(Company, company_id)
             if company is not None:
                 session.delete(company)
@@ -3490,6 +3616,14 @@ def create_app(
         session.add(company)
         session.flush()
         session.add(Membership(user_id=user.id, company_id=company.id, role="owner"))
+        session.add(
+            Subscription(
+                company_id=company.id,
+                plan=DEFAULT_PLAN,
+                status="trialing",
+                trial_ends_at=utcnow() + timedelta(days=TRIAL_DAYS),
+            )
+        )
         audit(session, user.id, "company.create", company.name, client_ip(request))
         session.commit()
         activate_company(session, request, user, company.id)
@@ -3742,6 +3876,202 @@ def create_app(
         session.delete(invite)
         session.commit()
 
+    # -- Abonnement -------------------------------------------------------
+
+    def billing_output(session: Session, company_id: int) -> BillingOutput:
+        state, _ = billing_status(session, company_id)
+        mode = "off"
+        if billing_client.configured:
+            mode = "test" if billing_client.test_mode else "live"
+        return BillingOutput(
+            **state.as_dict(),
+            mode=mode,
+            plans=[
+                BillingPlanOutput(
+                    key=plan.key, label=plan.label, cents=plan.cents, description=plan.description
+                )
+                for plan in PLANS.values()
+            ],
+        )
+
+    def apply_payment(session: Session, sub: Subscription, payment: dict) -> None:
+        """Update the subscription after a payment was fetched from Mollie.
+
+        Mollie ruft de webhook zonder handtekening aan, dus de status komt altijd
+        uit deze opgehaalde betaalresource en nooit uit de melding zelf.
+        """
+        status_value = (payment.get("status") or "").lower()
+        meta = payment.get("metadata") or {}
+        plan = plan_of(meta.get("plan") or sub.plan)
+        if status_value == "paid":
+            if (payment.get("sequenceType") or "").lower() == "first":
+                customer_id = payment.get("customerId") or sub.mollie_customer_id
+                if not customer_id:
+                    raise BillingError("Deze betaling hoort niet bij een klant.")
+                mandates = billing_client.list_mandates(customer_id)
+                if not any(item.get("status") in {"valid", "pending"} for item in mandates):
+                    raise BillingError(
+                        "De bankmachtiging is nog niet actief. Probeer het over een minuut opnieuw."
+                    )
+                previous = sub.mollie_subscription_id
+                next_charge = add_month(date.today())
+                started = billing_client.create_subscription(
+                    customer_id=customer_id,
+                    plan=plan,
+                    start_date=next_charge,
+                    webhook_url=f"{settings.public_url}/api/billing/webhook",
+                )
+                sub.mollie_customer_id = customer_id
+                sub.mollie_subscription_id = started.get("id")
+                sub.plan = plan.key
+                sub.status = "active"
+                sub.current_period_end = datetime.combine(
+                    next_charge, datetime.min.time(), tzinfo=timezone.utc
+                )
+                if previous and previous != sub.mollie_subscription_id:
+                    try:
+                        billing_client.cancel_subscription(customer_id, previous)
+                    except BillingError:
+                        logger.warning("Oude abonnement %s kon niet worden opgezegd", previous)
+                logger.info(
+                    "Abonnement %s actief voor bedrijf %s", plan.key, sub.company_id
+                )
+            else:
+                current_end = sub.current_period_end
+                if current_end is not None and current_end.tzinfo is None:
+                    current_end = current_end.replace(tzinfo=timezone.utc)
+                start = max(date.today(), current_end.date() if current_end else date.today())
+                sub.current_period_end = datetime.combine(
+                    add_month(start), datetime.min.time(), tzinfo=timezone.utc
+                )
+                sub.status = "active"
+        elif status_value in {"failed", "expired", "canceled"}:
+            sub.status = "past_due"
+            logger.info("Betaling %s voor bedrijf %s is %s", payment.get("id"), sub.company_id, status_value)
+
+    @app.get("/api/billing", response_model=BillingOutput)
+    def billing_overview(
+        session: Session = Depends(get_session), user: User = Depends(get_current_user)
+    ):
+        require_perm(user, "settings.read")
+        return billing_output(session, tenant_id(user))
+
+    @app.post("/api/billing/checkout")
+    def billing_checkout(
+        payload: CheckoutInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        require_perm(user, "settings.write")
+        if not billing_client.configured:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Betalen is op deze server nog niet ingesteld. Je proefperiode blijft gewoon "
+                    "lopen; de beheerder moet de Mollie-sleutel toevoegen."
+                ),
+            )
+        enforce(request, "billing-checkout", 10, 3600, str(user.id))
+        company = getattr(user, "_company", None)
+        if company is None:
+            raise HTTPException(status_code=409, detail="Kies eerst een bedrijf")
+        sub = subscription_for(session, company.id)
+        plan = plan_of(payload.plan)
+        if sub.status == "active" and sub.plan == plan.key and sub.mollie_subscription_id:
+            raise HTTPException(status_code=409, detail="Dit abonnement loopt al.")
+        customer_id = sub.mollie_customer_id
+        try:
+            if not customer_id:
+                customer_id = billing_client.create_customer(
+                    name=company.name, email=user.email, company_id=company.id
+                )
+                sub.mollie_customer_id = customer_id
+                session.commit()
+            payment = billing_client.create_first_payment(
+                customer_id=customer_id,
+                plan=plan,
+                company_id=company.id,
+                redirect_url=f"{settings.public_url}/instellingen.html?billing=return",
+                webhook_url=f"{settings.public_url}/api/billing/webhook",
+            )
+        except BillingError as error:
+            session.rollback()
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        audit(session, user.id, "billing.checkout", plan.key, client_ip(request))
+        session.commit()
+        return {"checkout_url": checkout_link(payment), "payment_id": payment.get("id")}
+
+    @app.get("/api/billing/confirm", response_model=BillingOutput)
+    def billing_confirm(
+        payment_id: str = "",
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        require_perm(user, "settings.read")
+        company_id = tenant_id(user)
+        sub = subscription_for(session, company_id)
+        if payment_id and billing_client.configured:
+            try:
+                payment = billing_client.get_payment(payment_id)
+                if str((payment.get("metadata") or {}).get("company_id")) == str(company_id):
+                    apply_payment(session, sub, payment)
+                    session.commit()
+            except BillingError as error:
+                raise HTTPException(status_code=502, detail=str(error)) from error
+        return billing_output(session, company_id)
+
+    @app.post("/api/billing/webhook", include_in_schema=False)
+    async def billing_webhook(request: Request, session: Session = Depends(get_session)):
+        form = await request.form()
+        payment_id = str(form.get("id") or "").strip()
+        if not payment_id:
+            raise HTTPException(status_code=400, detail="Geen payment-id")
+        try:
+            payment = billing_client.get_payment(payment_id)
+        except BillingError as error:
+            logger.warning("Webhook kon betaling %s niet ophalen: %s", payment_id, error)
+            return JSONResponse({"detail": "probeer later opnieuw"}, status_code=503)
+        meta_company = (payment.get("metadata") or {}).get("company_id")
+        sub = None
+        if str(meta_company or "").isdigit():
+            sub = subscription_for(session, int(str(meta_company)))
+        elif payment.get("subscriptionId"):
+            sub = session.scalar(
+                select(Subscription).where(
+                    Subscription.mollie_subscription_id == payment.get("subscriptionId")
+                )
+            )
+        if sub is None:
+            return {"ok": True, "ignored": True}
+        try:
+            apply_payment(session, sub, payment)
+        except BillingError as error:
+            logger.warning("Webhook %s kon abonnement niet bijwerken: %s", payment_id, error)
+            return JSONResponse({"detail": "probeer later opnieuw"}, status_code=503)
+        session.commit()
+        return {"ok": True}
+
+    @app.post("/api/billing/cancel", status_code=204)
+    def billing_cancel(
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        require_perm(user, "settings.write")
+        sub = subscription_for(session, tenant_id(user))
+        if sub.mollie_customer_id and sub.mollie_subscription_id:
+            try:
+                billing_client.cancel_subscription(
+                    sub.mollie_customer_id, sub.mollie_subscription_id
+                )
+            except BillingError as error:
+                raise HTTPException(status_code=502, detail=str(error)) from error
+        sub.status = "canceled"
+        sub.mollie_subscription_id = None
+        audit(session, user.id, "billing.cancel", None, client_ip(request))
+        session.commit()
+
     # -- Static pages -----------------------------------------------------
 
     @app.get("/", include_in_schema=False)
@@ -3777,6 +4107,15 @@ def create_app(
         return FileResponse(
             asset,
             media_type="font/woff2",
+            headers={"Cache-Control": "public, max-age=604800"},
+        )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        """Browsers vragen deze naam op, ook als de pagina een SVG-icoon kiest."""
+        return FileResponse(
+            web_root / "icon.svg",
+            media_type="image/svg+xml",
             headers={"Cache-Control": "public, max-age=604800"},
         )
 

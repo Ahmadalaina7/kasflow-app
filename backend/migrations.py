@@ -302,11 +302,64 @@ def ensure_tenancy(engine: Engine) -> None:
             )
 
 
+def ensure_trials(engine: Engine) -> None:
+    """Give every existing company a proefperiode that starts at its creation.
+
+    Accounts that predate the subscription layer should not be locked out on
+    the first deploy; their trial starts when the company was created, which is
+    the same rule new accounts get.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "subscriptions" not in tables or "companies" not in tables:
+        return
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT c.id, c.created_at FROM companies c
+                WHERE NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.company_id = c.id)
+                """
+            )
+        ).fetchall()
+        def as_datetime(value) -> datetime:
+            if isinstance(value, datetime):
+                parsed = value
+            elif isinstance(value, str):
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    return now
+            else:
+                return now
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+        for company_id, created_at in rows:
+            start = as_datetime(created_at)
+            # Bestaande bedrijven krijgen een volle proefperiode vanaf nu; ze
+            # mogen niet op de dag van de upgrade op slot gaan.
+            trial_end = max(start, now) + timedelta(days=14)
+            connection.execute(
+                text(
+                    "INSERT INTO subscriptions "
+                    "(company_id, plan, status, trial_ends_at, created_at, updated_at) "
+                    "VALUES (:company_id, 'starter', 'trialing', :trial_end, :now, :now)"
+                ),
+                {"company_id": company_id, "trial_end": trial_end, "now": now},
+            )
+        if rows:
+            logger.info("Proefperiode gestart voor %s bestaande bedrijven", len(rows))
+
+
 def run_migrations(engine: Engine, metadata: MetaData) -> None:
     added = add_missing_columns(engine, metadata)
     # The rebuild only knows the legacy invoice columns, so add the newer ones again.
     if rebuild_legacy_invoices(engine):
         added += add_missing_columns(engine, metadata)
     ensure_tenancy(engine)
+    ensure_trials(engine)
     if added:
         logger.info("Kolommen toegevoegd: %s", ", ".join(f"{t}.{c}" for t, c in added))

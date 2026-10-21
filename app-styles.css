@@ -866,7 +866,10 @@ body.sheet-open{ overflow:hidden; }
   .auth-visual{ display:none; }
   .auth-brand{ display:flex; margin-bottom:24px; }
   .auth-form-wrap{
-    padding:36px 24px; min-height:100vh; min-height:100dvh;
+    /* Extra ruimte onder de knop: met het toetsenbord open moet de pagina nog
+       kunnen scrollen, anders valt "Inloggen" achter het toetsenbord. */
+    padding:32px 20px calc(112px + var(--safe-bottom));
+    min-height:100vh; min-height:100dvh; min-height:100svh;
     background:var(--gray-50);
   }
   .auth-form{ max-width:420px; margin:0 auto; }
@@ -905,7 +908,7 @@ body.sheet-open{ overflow:hidden; }
   }
   .modal-head{ padding-top:20px; }
   .modal-foot{ padding-bottom:calc(20px + var(--safe-bottom)); }
-  .auth-form-wrap{ padding:32px 20px; }
+  .auth-form-wrap{ padding:24px 18px calc(96px + var(--safe-bottom)); }
   .auth-form h1,.auth-form h2{ font-size:1.6rem; }
   .progress-pill{ font-size:0.76rem; padding:7px 11px; }
   .account-row{ align-items:flex-start; }
@@ -1054,4 +1057,43 @@ textarea.field-control{ min-height:88px; resize:vertical; line-height:1.55; }
   }
   /* Groter tikdoel (44px) voor de schakelaars zonder het uiterlijk te wijzigen. */
   .switch input{ height:44px; top:50%; transform:translateY(-50%); }
+}
+
+/* ---------- Abonnement ---------- */
+.billing-status{
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px;
+}
+.billing-status .row-sub{ color:var(--ink-500); font-size:0.86rem; }
+.billing-plans{
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr));
+  gap:12px; margin:0 0 16px;
+}
+.billing-plan{
+  display:flex; flex-direction:column; align-items:flex-start; gap:4px;
+  padding:16px 18px; border-radius:var(--radius-sm); text-align:left;
+  border:1px solid var(--line); background:var(--white);
+  transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.billing-plan:hover:not(:disabled){ border-color:var(--emerald-400); transform:translateY(-1px); }
+.billing-plan:focus-visible{ outline:2px solid var(--emerald-400); outline-offset:2px; }
+.billing-plan.is-current{
+  border-color:var(--emerald-600);
+  box-shadow:inset 0 0 0 1px var(--emerald-600);
+}
+.billing-plan:disabled{ opacity:.55; cursor:not-allowed; }
+.billing-plan-name{
+  font-family:var(--display); font-weight:700; font-size:1rem; color:var(--navy-900);
+}
+.billing-plan-price{
+  font-family:var(--display); font-weight:700; font-size:1.25rem;
+  letter-spacing:-0.02em; color:var(--navy-900);
+}
+.billing-plan-price small{
+  font-family:var(--sans); font-weight:500; font-size:0.78rem; color:var(--ink-500);
+  letter-spacing:0;
+}
+.billing-plan-desc{ font-size:0.82rem; line-height:1.45; color:var(--ink-500); }
+.billing-plan.is-current::after{
+  content:"Huidig abonnement"; margin-top:6px; font-size:0.72rem; font-weight:600;
+  letter-spacing:0.04em; text-transform:uppercase; color:var(--emerald-600);
 }

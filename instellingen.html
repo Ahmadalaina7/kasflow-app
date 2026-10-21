@@ -42,6 +42,26 @@
     </div>
 
     <div class="settings-grid">
+      <section class="settings-card wide" id="billing-card">
+        <div class="settings-head">
+          <div class="settings-avatar" aria-hidden="true">€</div>
+          <div>
+            <h2>Abonnement</h2>
+            <p class="row-sub" id="billing-message">Je abonnement wordt geladen…</p>
+          </div>
+        </div>
+        <div class="billing-status">
+          <span class="badge pending" id="billing-badge">Proefperiode</span>
+          <span class="row-sub" id="billing-period"></span>
+        </div>
+        <div class="billing-plans" id="billing-plans" role="group" aria-label="Kies je abonnement"></div>
+        <div class="form-actions end">
+          <button type="button" class="btn btn-outline" id="billing-cancel" hidden>Abonnement opzeggen</button>
+        </div>
+        <p class="form-note" id="billing-feedback" role="status" aria-live="polite"></p>
+        <p class="field-hint" id="billing-hint"></p>
+      </section>
+
       <section class="settings-card wide">
         <div class="settings-head">
           <div class="settings-avatar" data-user-initials aria-hidden="true">K</div>
@@ -304,6 +324,117 @@
   const passwordFeedback = document.getElementById('password-feedback');
   const deleteFeedback = document.getElementById('delete-feedback');
   const verifyBanner = document.getElementById('verify-banner');
+  const billingPlans = document.getElementById('billing-plans');
+  const billingBadge = document.getElementById('billing-badge');
+  const billingMessage = document.getElementById('billing-message');
+  const billingPeriod = document.getElementById('billing-period');
+  const billingFeedback = document.getElementById('billing-feedback');
+  const billingCancel = document.getElementById('billing-cancel');
+  const billingHint = document.getElementById('billing-hint');
+  let canManageBilling = true;
+
+  const BILLING_LABELS = {
+    trialing: 'Proefperiode',
+    trial_expired: 'Proefperiode afgelopen',
+    active: 'Actief',
+    past_due: 'Betaling mislukt',
+    canceled: 'Opgezegd',
+    canceled_expired: 'Opgezegd',
+    expired: 'Verlopen'
+  };
+
+  function priceLabel(cents) {
+    return '€ ' + (cents / 100).toFixed(2).replace('.', ',');
+  }
+
+  function renderBilling(data) {
+    const label = BILLING_LABELS[data.status] || data.status;
+    billingBadge.textContent = label;
+    billingBadge.className = 'badge ' + (data.can_write ? (data.status === 'active' ? 'paid' : 'pending') : 'overdue');
+    billingMessage.textContent = data.message;
+    if (data.status === 'trialing' && data.trial_ends_at) {
+      billingPeriod.textContent = 'Proefperiode tot ' + new Date(data.trial_ends_at).toLocaleDateString('nl-NL');
+    } else if (data.current_period_end) {
+      billingPeriod.textContent = 'Betaald tot ' + new Date(data.current_period_end).toLocaleDateString('nl-NL');
+    } else {
+      billingPeriod.textContent = '';
+    }
+    billingPlans.innerHTML = data.plans.map(plan => (
+      '<button type="button" class="billing-plan' + (plan.key === data.plan ? ' is-current' : '') + '"' +
+      ' data-plan="' + plan.key + '"' + (canManageBilling ? '' : ' disabled') + '>' +
+      '<span class="billing-plan-name">' + escapeHtml(plan.label) + '</span>' +
+      '<span class="billing-plan-price">' + priceLabel(plan.cents) + ' <small>per maand</small></span>' +
+      '<span class="billing-plan-desc">' + escapeHtml(plan.description) + '</span>' +
+      '</button>'
+    )).join('');
+    billingCancel.hidden = !canManageBilling || !['active', 'past_due'].includes(data.status);
+    billingHint.textContent = data.provider_ready
+      ? 'Betalen gaat met iDEAL via Mollie. Na de eerste betaling wordt het bedrag maandelijks automatisch afgeschreven via een bankmachtiging. Opzeggen kan altijd.'
+      : 'Deze server heeft nog geen Mollie-sleutel, dus betalen kan nog niet. Je proefperiode loopt gewoon door.';
+  }
+
+  async function loadBilling() {
+    try {
+      const data = await api('/api/billing');
+      renderBilling(data);
+      return data;
+    } catch (error) {
+      billingMessage.textContent = error.message;
+      return null;
+    }
+  }
+
+  billingPlans.addEventListener('click', async event => {
+    const button = event.target.closest('[data-plan]');
+    if (!button) return;
+    setBusy(button, true, 'Bezig…');
+    try {
+      const result = await api('/api/billing/checkout', {
+        method: 'POST',
+        body: { plan: button.dataset.plan }
+      });
+      window.location.href = result.checkout_url;
+      return;
+    } catch (error) {
+      note(billingFeedback, error.message, 'error');
+    }
+    setBusy(button, false);
+  });
+
+  billingCancel.addEventListener('click', async () => {
+    if (!window.confirm('Abonnement opzeggen? Je kunt tot het einde van de betaalde periode blijven boeken.')) return;
+    setBusy(billingCancel, true, 'Bezig…');
+    try {
+      await api('/api/billing/cancel', { method: 'POST' });
+      note(billingFeedback, 'Opgezegd. Je houdt toegang tot het einde van de betaalde periode.', 'info');
+      await loadBilling();
+    } catch (error) {
+      note(billingFeedback, error.message, 'error');
+    }
+    setBusy(billingCancel, false);
+  });
+
+  // Mollie stuurt de bezoeker terug met ?billing=return&id=tr_…: status ophalen.
+  (async function handleBillingReturn() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('billing') !== 'return') return;
+    try {
+      const data = await api('/api/billing/confirm?payment_id=' + encodeURIComponent(params.get('id') || ''));
+      renderBilling(data);
+      note(
+        billingFeedback,
+        data.status === 'active'
+          ? 'Betaling ontvangen. Je abonnement is actief.'
+          : data.provider_ready
+            ? 'We wachten nog op de bevestiging van de bank. Ververs deze pagina zo meteen.'
+            : 'Betalen is op deze server nog niet ingesteld. Je proefperiode loopt gewoon door.',
+        'info'
+      );
+    } catch (error) {
+      note(billingFeedback, error.message, 'error');
+    }
+    window.history.replaceState({}, '', 'instellingen.html');
+  })();
 
   function value(id) {
     return document.getElementById(id).value.trim();
@@ -604,6 +735,8 @@
       document.getElementById('team-card').hidden = !canTeam;
       if (canTeam) loadTeam();
       const canSettings = Kasflow.can(user, 'settings.write');
+      canManageBilling = canSettings;
+      loadBilling();
       document.getElementById('company-form').querySelectorAll('input, select, button').forEach(el => {
         if (!canSettings && el.id !== 'resend-verification') el.disabled = !canSettings;
       });

@@ -9,12 +9,39 @@ or a SQLite database), which is the most common way a small app leaks sessions.
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_ROOT = BASE_DIR.parent
 DEFAULT_DATABASE_URL = f"sqlite:///{(BASE_DIR / 'kasflow.sqlite3').as_posix()}"
+# Lokaal bewaarde signeersleutel. Zonder deze sleutel zou elke herstart een
+# nieuwe sleutel genereren en zou iedereen uitgelogd raken.
+DEV_SECRET_FILE = BASE_DIR / ".kasflow-secret"
+
+
+def development_secret_key() -> str:
+    """Return the local signing key, creating it once.
+
+    Sessions are signed with this key, so a stable key means a browser stays
+    logged in after the development server or the laptop restarts. The file is
+    git-ignored and only used outside production; production must pass its own
+    ``KASFLOW_SECRET_KEY``.
+    """
+    try:
+        existing = DEV_SECRET_FILE.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        existing = ""
+    if len(existing) >= 32:
+        return existing
+    key = secrets.token_urlsafe(48)
+    try:
+        DEV_SECRET_FILE.write_text(key + "\n", encoding="utf-8")
+        os.chmod(DEV_SECRET_FILE, 0o600)
+    except OSError:  # pragma: no cover - read-only checkout
+        return key
+    return key
 
 try:
     from dotenv import load_dotenv
@@ -37,6 +64,7 @@ class Settings:
     allowed_hosts: tuple[str, ...] = ()
     session_max_age: int = 43_200
     max_upload_bytes: int = 10 * 1024 * 1024
+    mollie_api_key: str = ""
 
     @property
     def production(self) -> bool:
@@ -65,9 +93,13 @@ class Settings:
         except ValueError:
             max_upload = 10 * 1024 * 1024
         upload_dir = Path(os.getenv("KASFLOW_UPLOAD_DIR", str(BASE_DIR / "uploads"))).expanduser()
+        environment = (os.getenv("KASFLOW_ENV", "development") or "development").strip().lower()
+        secret_key = os.getenv("KASFLOW_SECRET_KEY", "").strip()
+        if not secret_key and environment != "production":
+            secret_key = development_secret_key()
         return cls(
-            env=(os.getenv("KASFLOW_ENV", "development") or "development").strip().lower(),
-            secret_key=os.getenv("KASFLOW_SECRET_KEY", "").strip(),
+            env=environment,
+            secret_key=secret_key,
             database_url=(
                 os.getenv("KASFLOW_DATABASE_URL", DEFAULT_DATABASE_URL) or DEFAULT_DATABASE_URL
             ).strip(),
@@ -76,6 +108,7 @@ class Settings:
             allowed_hosts=allowed,
             session_max_age=session_max_age,
             max_upload_bytes=max_upload,
+            mollie_api_key=os.getenv("KASFLOW_MOLLIE_API_KEY", "").strip(),
         )
 
     def validate(self) -> None:

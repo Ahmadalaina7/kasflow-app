@@ -534,9 +534,36 @@
     },
   };
 
+  // Proefperiode of mislukte incasso: één regel bovenaan, geen modal.
+  async function paintBillingBanner() {
+    if (!appShell || document.getElementById('billing-banner')) return;
+    try {
+      const response = await fetch('/api/billing', { headers: { Accept: 'application/json' } });
+      if (!response.ok) return;
+      const billing = await response.json();
+      if (billing.can_write && billing.days_left > 3) return;
+      const main = document.querySelector('.main');
+      if (!main) return;
+      const banner = document.createElement('div');
+      banner.id = 'billing-banner';
+      banner.className = 'alert ' + (billing.can_write ? 'warning' : 'danger');
+      banner.innerHTML =
+        '<div>' + escapeHtml(billing.message) +
+        ' <a class="btn btn-outline btn-sm" href="instellingen.html#billing-card">Bekijk abonnement</a></div>';
+      const topbar = main.querySelector('.topbar');
+      if (topbar) topbar.insertAdjacentElement('afterend', banner);
+      else main.insertBefore(banner, main.firstChild);
+    } catch (error) {
+      // De banner is een extra; de app werkt ook zonder.
+    }
+  }
+
   ready.then(user => {
     window.Kasflow._user = user;
-    if (user) document.body.classList.add('is-authenticated');
+    if (user) {
+      document.body.classList.add('is-authenticated');
+      paintBillingBanner();
+    }
   });
 
   if ('serviceWorker' in navigator) {

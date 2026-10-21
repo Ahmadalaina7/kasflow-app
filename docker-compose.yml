@@ -45,6 +45,7 @@ services:
       KASFLOW_SMTP_PASSWORD: ${KASFLOW_SMTP_PASSWORD:-}
       KASFLOW_MAIL_FROM: ${KASFLOW_MAIL_FROM:-}
       KASFLOW_MAIL_FROM_NAME: ${KASFLOW_MAIL_FROM_NAME:-Kasflow}
+      KASFLOW_MOLLIE_API_KEY: ${KASFLOW_MOLLIE_API_KEY:-}
       TZ: Europe/Amsterdam
     volumes:
       - uploads:/app/backend/uploads

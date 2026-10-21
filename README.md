@@ -14,14 +14,19 @@ SQLAlchemy, SQLite voor lokaal ontwikkelen en PostgreSQL in productie.
 py -3.14 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r backend\requirements.txt
-$env:KASFLOW_SECRET_KEY = python -c "import secrets; print(secrets.token_urlsafe(48))"
 python -m uvicorn app:app --app-dir backend --host 127.0.0.1 --port 8010
 ```
 
 Open <http://127.0.0.1:8010>. Maak een account via **Start gratis**; de
 marketingsite is publiek, de app zit achter inloggen.
 
-- Database: `backend/kasflow.sqlite3` (wordt automatisch aangemaakt).
+- Database: `backend/kasflow.sqlite3` (wordt automatisch aangemaakt). Accounts,
+  bedrijfsgegevens, klanten, facturen, bonnen en uren staan daarin en blijven
+  bewaard als je de server herstart.
+- Sessies: de app maakt de eerste keer `backend/.kasflow-secret` aan (buiten
+  git, alleen buiten productie). Die sleutel ondertekent de sessiecookie, zodat
+  je na een herstart ingelogd blijft. In productie is een eigen
+  `KASFLOW_SECRET_KEY` verplicht en wordt er niets op schijf gezet.
 - Bonnetjes: `backend/uploads/`.
 - Zonder SMTP-instellingen draait e-mail in **logmodus**: mails worden gelogd in
   plaats van verstuurd en e-mailverificatie wordt overgeslagen, zodat je lokaal
@@ -75,6 +80,12 @@ verwijderen van een account en de migratie van een oud databaseschema.
 - **Instellingen** — bedrijfsgegevens, adres, IBAN, betalingstermijn,
   factuurvoorvoegsel, meldingsvoorkeuren, wachtwoord, recente activiteit,
   volledige gegevensexport en accountverwijdering.
+- **Abonnement** — 14 dagen proefperiode vanaf het aanmaken van een bedrijf,
+  daarna maandelijks via iDEAL (Mollie). De eerste betaling met iDEAL levert de
+  bankmachtiging op; de volgende maanden worden automatisch geïncasseerd. Na de
+  proefperiode blijven lezen, exporteren en je account verwijderen mogelijk;
+  boeken kan pas weer met een actief abonnement. Zonder Mollie-sleutel start de
+  app gewoon en legt Instellingen uit wat er nog ontbreekt.
 - **Juridisch** — privacyverklaring, algemene voorwaarden en
   verwerkersovereenkomst (conceptteksten, zie de waarschuwing bovenaan elke
   pagina).
@@ -102,10 +113,11 @@ Zie [.env.example](.env.example) voor alle variabelen. De belangrijkste:
 
 | Variabele | Betekenis |
 | --- | --- |
-| `KASFLOW_SECRET_KEY` | Ondertekent sessies. Verplicht in productie (min. 32 tekens). |
+| `KASFLOW_SECRET_KEY` | Ondertekent sessies. Verplicht in productie (min. 32 tekens); lokaal automatisch bewaard in `backend/.kasflow-secret`. |
 | `KASFLOW_DATABASE_URL` | Standaard SQLite; in productie PostgreSQL. |
 | `KASFLOW_PUBLIC_URL` | Publieke https-URL, gebruikt in mails en links. |
 | `KASFLOW_SMTP_*` | SMTP-server (bijv. een Cloud86-mailbox) voor systeem- en factuurmails. |
+| `KASFLOW_MOLLIE_API_KEY` | Mollie-sleutel (`test_…` of `live_…`) voor iDEAL en de maandelijkse incasso. |
 | `KASFLOW_ALLOWED_HOSTS` | Komma-gescheiden hostnamen die de app mogen aanroepen. |
 | `KASFLOW_MAX_UPLOAD_MB` | Maximale uploadgrootte voor bonnetjes (standaard 10). |
 

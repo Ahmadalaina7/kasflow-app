@@ -69,6 +69,7 @@ verzin geen nieuw signature-element.
 | `invoice_lines` | Regel met omschrijving, aantal, stukprijs, btw-tarief in basispunten en berekende bedragen |
 | `receipts` | Geüpload bonnetje met metadata; het bestand staat buiten de webmap |
 | `vat_declarations` | Interne afvinking van een kwartaal (geen officiële aangifte) |
+| `subscriptions` | Abonnement per bedrijf: plan, status, einde proefperiode, einde betaalde periode, Mollie-klant en -abonnement |
 | `password_resets` | Gehashte, eenmalige en tijdgebonden resettokens |
 | `audit_events` | Beveiligingslog per account: inloggen, facturen, export, accountwijzigingen |
 
@@ -85,11 +86,28 @@ Alle queries filteren op het ingelogde account.
 | `PATCH /api/auth/me` | Bedrijfsgegevens, adres, IBAN, betalingstermijn, voorvoegsel, meldingen |
 | `GET /api/account/export`, `GET /api/account/activity`, `DELETE /api/account` | AVG: inzage, activiteit, verwijdering (inclusief bonbestanden) |
 | `GET/POST/PATCH/DELETE /api/customers` | Klanten, verwijderen geblokkeerd zolang er facturen zijn |
+| `GET /api/billing`, `POST /api/billing/checkout`, `cancel` | Abonnementsstatus, iDEAL-checkout via Mollie, opzeggen |
+| `GET /api/billing/confirm`, `POST /api/billing/webhook` | Betaling controleren (redirect) en Mollie-melding verwerken |
 | `GET /api/invoices`, `GET/POST/PATCH /api/invoices/{id}`, `GET next-number` | Facturen, status, doorlopende nummerreeks |
 | `GET /api/invoices/{id}/pdf`, `POST /api/invoices/{id}/send` | PDF volgens factuureisen, verzenden met bijlage |
 | `GET/POST/DELETE /api/vat` en `/api/vat/approval` | Btw per kwartaal met interne afvinking |
 | `GET/POST/DELETE /api/receipts` | Bonnetjes uploaden, openen en verwijderen |
 | `GET /api/health` | Status, database en of SMTP is geconfigureerd |
+
+## Abonnementen
+
+Elk bedrijf krijgt bij het aanmaken een `subscriptions`-rij met status
+`trialing` en een proefperiode van 14 dagen (`billing.TRIAL_DAYS`). Betaald
+wordt per maand: de eerste betaling gaat met iDEAL via Mollie, Mollie maakt
+daar een SEPA-machtiging van en int de volgende maanden automatisch. De
+webhook bevat alleen een payment-id; de status wordt altijd opgehaald bij
+Mollie, nooit uit de melding zelf vertrouwd.
+
+Na de proefperiode blijft lezen, exporteren en accountverwijdering werken;
+schrijfacties krijgen `402` met uitleg tot er een actief abonnement is. Bij een
+mislukte incasso is er 7 dagen respijt (`billing.GRACE_DAYS`) voordat de app op
+slot gaat. Zonder `KASFLOW_MOLLIE_API_KEY` start de app gewoon en zegt de
+checkout eerlijk dat betalen nog niet is ingesteld.
 
 ## Beveiliging (wat waarom)
 
@@ -99,6 +117,11 @@ Alle queries filteren op het ingelogde account.
   `SameSite=Lax`, `Secure` zodra de publieke URL https is. Een wachtwoordwijziging
   of reset verhoogt `users.session_version`, waarmee alle andere apparaten
   uitloggen.
+- **Sleutel**: de cookie wordt ondertekend met `KASFLOW_SECRET_KEY`. Buiten
+  productie maakt `config.development_secret_key()` eenmalig
+  `backend/.kasflow-secret` aan (buiten git), zodat een herstart van de server
+  niemand uitlogt. In productie is een eigen sleutel verplicht en wordt er niets
+  op schijf gezet.
 - **CSRF**: elke mutatie onder `/api/` met een `Origin`-header moet van dezelfde
   host komen. De sessiecookie is `SameSite=Lax`.
 - **Koppen**: CSP, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`,
