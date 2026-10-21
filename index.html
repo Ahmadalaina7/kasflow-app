@@ -93,6 +93,7 @@
     background: rgba(255,255,255,0.06);
     color: var(--white);
   }
+  .nav-drawer{ display:none; }
   .nav-inner{
     display:flex; align-items:center; justify-content:space-between;
   }
@@ -193,10 +194,14 @@
     background: rgba(255,255,255,0.06);
     color: var(--white);
   }
+  .nav-drawer{ display:none; }
 
   /* ---------- HERO ---------- */
   .hero{
     position:relative;
+    /* De gloed achter de mockup loopt buiten de kaart; op smalle schermen mag
+       die geen horizontale scrollbar veroorzaken. */
+    overflow:hidden;
     background: radial-gradient(120% 100% at 18% 0%, #123058 0%, var(--navy-950) 55%, #060F20 100%);
     padding: 168px 0 120px;
     overflow:hidden;
@@ -744,7 +749,7 @@
     flex-wrap:wrap; gap:16px;
   }
   .footer-bottom p{ color: rgba(255,255,255,0.4); font-size:0.82rem; }
-  .footer-legal{ display:flex; gap:24px; }
+  .footer-legal{ display:flex; flex-wrap:wrap; gap:12px 24px; }
   .footer-legal a{ color: rgba(255,255,255,0.4); font-size:0.82rem; }
   .footer-legal a:hover{ color: rgba(255,255,255,0.8); }
 
@@ -766,8 +771,33 @@
     .footer-grid{ grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 680px){
-    .nav-links, .nav-cta .btn-ghost-light{ display:none; }
+    .nav-links{ display:none; }
+    .nav-cta .btn-primary{ display:none; }
+    .nav-login{
+      display:inline-flex; align-items:center; justify-content:center;
+      min-height:44px; padding:0 16px; border-radius:999px;
+      border:1px solid rgba(255,255,255,0.28); background:rgba(255,255,255,0.07);
+      font-size:0.9rem; font-weight:600; color:var(--white);
+    }
+    .nav-login:hover{ background:rgba(255,255,255,0.14); }
     .nav-toggle{ display:flex; }
+    .nav.open .nav-links{
+      max-height: calc(100dvh - 76px);
+      overflow-y:auto;
+    }
+    .nav.open .nav-drawer{
+      display:flex; flex-direction:column; gap:10px;
+      padding-top:14px; border-top:1px solid rgba(255,255,255,0.08);
+    }
+    .nav.open .nav-links .nav-drawer .btn,
+    .nav.open .nav-links .nav-drawer .btn-ghost-light{
+      width:100%; padding:15px 18px; border-radius:999px; font-size:0.95rem;
+      background:transparent;
+    }
+    .nav.open .nav-links .nav-drawer .btn-primary{
+      background:linear-gradient(135deg, var(--emerald-400), var(--emerald-600));
+      color:var(--navy-950);
+    }
     .nav-inner{ align-items:center; gap:12px; }
     .hero{ padding: 110px 0 70px; }
     .hero-grid{ gap: 40px; }
@@ -794,16 +824,20 @@
 <nav class="nav" id="nav">
   <div class="container nav-inner">
     <div class="logo"><span class="logo-mark"></span>Kasflow</div>
-    <div class="nav-links">
+    <div class="nav-links" id="nav-menu">
       <a href="#functies">Functies</a>
       <a href="#rekentool">Rekentool</a>
       <a href="#tarieven">Tarieven</a>
+      <div class="nav-drawer">
+        <a href="signup.html" class="btn btn-primary">Start gratis</a>
+        <a href="login.html" class="btn-ghost-light">Inloggen</a>
+      </div>
     </div>
     <div class="nav-cta">
-      <a href="login.html" class="btn-ghost-light">Inloggen</a>
+      <a href="login.html" class="btn-ghost-light nav-login">Inloggen</a>
       <a href="#tarieven" class="btn btn-primary">Start gratis</a>
     </div>
-    <button class="nav-toggle" aria-label="Menu"><span></span></button>
+    <button class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false" aria-controls="nav-menu" aria-haspopup="true"><span></span></button>
   </div>
 </nav>
 
@@ -1160,12 +1194,31 @@
 
   // Mobile nav toggle (simple show/hide of links as a dropdown)
   const toggle = document.querySelector('.nav-toggle');
+  const setMenu = open => {
+    nav.classList.toggle('open', open);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
   toggle.addEventListener('click', () => {
-    nav.classList.toggle('open');
+    setMenu(!nav.classList.contains('open'));
+  });
+  // Sluit het menu zodra er iets gekozen wordt, anders blijft het over de pagina hangen.
+  nav.querySelectorAll('.nav-links a').forEach(link => {
+    link.addEventListener('click', () => setMenu(false));
+  });
+  document.addEventListener('keydown', event => {
+    if(event.key === 'Escape' && nav.classList.contains('open')){
+      setMenu(false);
+      toggle.focus();
+    }
+  });
+  document.addEventListener('click', event => {
+    if(nav.classList.contains('open') && !nav.contains(event.target)){
+      setMenu(false);
+    }
   });
   window.addEventListener('resize', () => {
     if(window.innerWidth > 680){
-      nav.classList.remove('open');
+      setMenu(false);
     }
   });
 </script>
