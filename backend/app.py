@@ -85,7 +85,7 @@ from billing import (
 from bank_import import StatementError, parse_statement
 from config import Settings
 from invoice_pdf import InvoiceLineData, InvoicePdfData, Party, build_invoice_pdf
-from kvk import KvkClient, KvkError
+from kvk import KvkClient, KvkError, KvkInactive
 from mailer import Mailer
 from migrations import run_migrations
 from receipt_parse import parse_receipt_file
@@ -686,7 +686,7 @@ class RegisterOutput(UserOutput):
 
 class ProfileInput(BaseModel):
     company_name: Annotated[str, Field(min_length=1, max_length=200)]
-    kvk_number: Annotated[str, Field(pattern=r"^[0-9]{8}$")]
+    kvk_number: Annotated[str, Field(min_length=8, max_length=16)]
     vat_number: Annotated[str | None, Field(max_length=20)] = None
     phone: Annotated[str | None, Field(max_length=50)] = None
     street: Annotated[str | None, Field(max_length=200)] = None
@@ -702,6 +702,11 @@ class ProfileInput(BaseModel):
     notify_email: bool = True
     notify_sms: bool = False
     notify_backup: bool = True
+
+    @field_validator("kvk_number")
+    @classmethod
+    def normalize_profile_kvk(cls, value: str) -> str:
+        return digits_kvk(value)
 
     @field_validator("company_name", "vat_number", "phone", "street", "postal_code", "city", "iban", "invoice_prefix")
     @classmethod
@@ -2085,8 +2090,20 @@ def create_app(
         enforce(request, "kvk-lookup", 20, 3600)
         try:
             company = kvk_client.lookup(kvk_number)
-        except KvkError as error:
+        except KvkInactive as error:
             raise_kvk(error)
+        except KvkError as error:
+            if getattr(kvk_client, "strict", True):
+                raise_kvk(error)
+            digits = re.sub(r"\D", "", kvk_number or "")
+            return {
+                "kvk_number": digits,
+                "name": "",
+                "city": "",
+                "street": "",
+                "active": True,
+                "verified": False,
+            }
         return company.as_public()
 
     @app.post("/api/auth/register", response_model=RegisterOutput, status_code=201)

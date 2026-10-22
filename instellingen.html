@@ -108,7 +108,7 @@
           <div class="field-row">
             <div>
               <label class="field-label" for="company-kvk">KVK-nummer</label>
-              <input id="company-kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" placeholder="12345678" required>
+              <input id="company-kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="16" placeholder="12345678" required>
             </div>
             <div>
               <label class="field-label" for="company-vat">BTW-id</label>
@@ -234,7 +234,7 @@
             </div>
             <div>
               <label class="field-label" for="new-company-kvk">KVK-nummer</label>
-              <input id="new-company-kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" required>
+              <input id="new-company-kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="16" required>
               <div class="field-hint">We controleren nummer en naam bij KVK voordat het bedrijf wordt toegevoegd.</div>
             </div>
           </div>
@@ -441,10 +441,14 @@
     return document.getElementById(id).value.trim();
   }
 
+  function kvkValue(id) {
+    return value(id).replace(/\D/g, '').slice(0, 8);
+  }
+
   function profilePayload() {
     return {
       company_name: value('company-name'),
-      kvk_number: value('company-kvk'),
+      kvk_number: kvkValue('company-kvk'),
       vat_number: value('company-vat') || null,
       phone: value('company-phone') || null,
       street: value('company-street') || null,
@@ -668,7 +672,7 @@
         method: 'POST',
         body: {
           name: value('new-company-name'),
-          kvk_number: value('new-company-kvk')
+          kvk_number: kvkValue('new-company-kvk')
         }
       });
       window.location.reload();

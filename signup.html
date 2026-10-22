@@ -59,8 +59,8 @@
       <div class="step-pane active" id="step-1">
         <div class="field-group">
           <label class="field-label" for="kvk">KVK-nummer</label>
-          <input id="kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" placeholder="12345678" required>
-          <div class="field-hint">8 cijfers, zonder punten. We controleren het nummer bij KVK voordat het account bestaat.</div>
+          <input id="kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="16" placeholder="12345678" required>
+          <div class="field-hint">8 cijfers. Punten of spaties mag je laten staan; die halen we weg.</div>
           <p class="field-hint" id="kvk-status" role="status" aria-live="polite"></p>
         </div>
         <div class="field-group" style="margin-top:18px">
@@ -197,23 +197,41 @@
     return result;
   }
 
+  function digitsKvk(value) {
+    return String(value || '').replace(/\D/g, '').slice(0, 8);
+  }
+
+  function readKvk() {
+    const number = digitsKvk(kvkInput.value);
+    if (kvkInput.value !== number) kvkInput.value = number;
+    return number;
+  }
+
   async function ensureCompany() {
-    const number = kvkInput.value.replace(/\D/g, '');
+    const number = readKvk();
     if (number.length !== 8) {
       setKvkStatus('Vul een KVK-nummer van 8 cijfers in.', 'error');
       kvkInput.focus();
       return false;
     }
     if (kvkLookup && kvkLookup.kvk_number === number) {
-      if (!companyInput.value.trim()) companyInput.value = kvkLookup.name || '';
+      if (!companyInput.value.trim() && kvkLookup.name) companyInput.value = kvkLookup.name;
       return true;
     }
     setKvkStatus('Controleren bij KVK…');
     try {
       kvkLookup = await lookupKvk(number);
-      if (!companyInput.value.trim()) companyInput.value = kvkLookup.name || '';
-      const place = kvkLookup.city ? ', ' + kvkLookup.city : '';
-      setKvkStatus('Gevonden bij KVK: ' + (kvkLookup.name || number) + place, 'success');
+      if (!companyInput.value.trim() && kvkLookup.name) companyInput.value = kvkLookup.name;
+      if (kvkLookup.verified === false) {
+        setKvkStatus('We konden dit nummer niet automatisch bij KVK controleren. Vul je officiële bedrijfsnaam in; die bevestig je zelf.', 'warning');
+        return true;
+      }
+      if (kvkLookup.name) {
+        const place = kvkLookup.city ? ', ' + kvkLookup.city : '';
+        setKvkStatus('Gevonden bij KVK: ' + kvkLookup.name + place, 'success');
+      } else {
+        setKvkStatus('Dit KVK-nummer is bekend. Vul de officiële bedrijfsnaam in.', 'success');
+      }
       return true;
     } catch (error) {
       kvkLookup = null;
@@ -223,10 +241,10 @@
     }
   }
 
-  kvkInput.addEventListener('input', () => {
+  function scheduleKvkLookup() {
     kvkLookup = null;
     window.clearTimeout(kvkTimer);
-    const number = kvkInput.value.replace(/\D/g, '');
+    const number = readKvk();
     if (number.length !== 8) {
       setKvkStatus('');
       return;
@@ -234,12 +252,18 @@
     kvkTimer = window.setTimeout(() => {
       ensureCompany();
     }, 350);
+  }
+
+  kvkInput.addEventListener('input', scheduleKvkLookup);
+  kvkInput.addEventListener('change', scheduleKvkLookup);
+  kvkInput.addEventListener('blur', () => {
+    readKvk();
   });
 
   nextButton.addEventListener('click', async () => {
     if (activeIndex === steps.length - 1) return;
     if (activeIndex === 0) {
-      const number = kvkInput.value.replace(/\D/g, '');
+      const number = readKvk();
       if (number.length !== 8) {
         kvkInput.reportValidity();
         kvkInput.focus();
@@ -294,7 +318,7 @@
 
     const payload = {
       company_name: document.getElementById('company-name').value.trim(),
-      kvk_number: document.getElementById('kvk').value.trim(),
+      kvk_number: readKvk(),
       vat_number: document.getElementById('vat').value.trim() || null,
       email: document.getElementById('email').value.trim(),
       password,

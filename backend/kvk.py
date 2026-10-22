@@ -1,8 +1,10 @@
 """Controleer KVK-nummer en bedrijfsnaam tegen het Handelsregister.
 
-Zonder deze check kan iedereen een account openen met een verzonnen nummer.
-In productie gaat de aanvraag naar de echte KVK-API (sleutel verplicht). Lokaal
-zonder sleutel gebruiken we de testdataset van KVK, zodat het pad hetzelfde is.
+Met een officiële KVK-API-sleutel is de check hard: nummer en naam moeten kloppen.
+Zonder die sleutel gebruiken we de gratis KVK-check van Bedrijfsdata.nl (geen
+eigen api_key nodig). Daarmee vullen we naam en plaats in, ook voor een
+eenmanszaak. Alleen als die bron het nummer niet kent, mag de ondernemer de naam
+zelf invullen.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ logger = logging.getLogger("kasflow.kvk")
 
 PRODUCTION_BASE = "https://api.kvk.nl"
 TEST_BASE = "https://api.kvk.nl/test"
+OPENDATA_URL = "https://opendata.kvk.nl/api/v1/hvds/basisbedrijfsgegevens/kvknummer"
+BEDRIJFSDATA_URL = "https://free.bedrijfsdata.nl/v1.1/kvk"
 # Publieke testsleutel uit de KVK-documentatie, alleen geldig op de test-API.
 TEST_API_KEY = "l7xx1f2691f2520d487b902f4e0b57a0b197"
 LEGAL_FORM = re.compile(
@@ -57,11 +61,20 @@ class KvkUnavailable(KvkError):
     message = "Het Handelsregister is tijdelijk niet bereikbaar. Probeer het zo opnieuw."
 
 
+class KvkBusy(KvkError):
+    status_code = 429
+    message = "KVK laat even geen extra controles toe. Wacht een minuut en probeer het opnieuw."
+
+
 class KvkNotConfigured(KvkError):
     status_code = 503
     message = (
         "Bedrijfscontrole bij KVK is niet ingesteld. Zet KASFLOW_KVK_API_KEY in de serverconfiguratie."
     )
+
+
+class KvkNameRequired(KvkError):
+    message = "Vul de bedrijfsnaam in zoals die bij KVK staat."
 
 
 @dataclass(frozen=True)
@@ -73,6 +86,7 @@ class KvkCompany:
     street: str = ""
     active: bool = True
     match_any_name: bool = False
+    verified: bool = True
 
     def as_public(self) -> dict:
         return {
@@ -81,6 +95,7 @@ class KvkCompany:
             "city": self.city,
             "street": self.street,
             "active": self.active,
+            "verified": self.verified,
         }
 
 
@@ -151,29 +166,121 @@ def company_from_results(kvk_number: str, results: list[dict]) -> KvkCompany:
     )
 
 
+def company_from_bedrijfsdata(kvk_number: str, payload: dict) -> KvkCompany:
+    rows = payload.get("kvk") if isinstance(payload.get("kvk"), list) else []
+    if not rows:
+        raise KvkNotFound()
+    active_rows = [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("active") not in {0, "0", False, "false", "False"}
+    ]
+    if not active_rows:
+        raise KvkInactive()
+    preferred = next(
+        (row for row in active_rows if _text(row.get("type")).lower() == "hoofdvestiging"),
+        active_rows[0],
+    )
+    names: list[str] = []
+    for row in [preferred, *active_rows]:
+        naam = _text(row.get("name"))
+        if naam and naam not in names:
+            names.append(naam)
+    return KvkCompany(
+        kvk_number=kvk_number,
+        name=names[0] if names else kvk_number,
+        names=names,
+        city=_text(preferred.get("city")),
+        active=True,
+        verified=True,
+    )
+
+
+def company_from_opendata(kvk_number: str, payload: dict) -> KvkCompany:
+    if _text(payload.get("actief")).upper() == "N":
+        raise KvkInactive()
+    return KvkCompany(
+        kvk_number=kvk_number,
+        name="",
+        names=[],
+        match_any_name=True,
+        active=True,
+        verified=True,
+    )
+
+
+def declared_company(kvk_number: str, company_name: str) -> KvkCompany:
+    number = re.sub(r"\D", "", kvk_number or "")
+    if len(number) != 8:
+        raise KvkNotFound()
+    name = (company_name or "").strip()
+    if not name:
+        raise KvkNameRequired()
+    return KvkCompany(
+        kvk_number=number,
+        name=name,
+        names=[name],
+        match_any_name=True,
+        verified=False,
+    )
+
+
 class KvkClient:
-    def __init__(self, *, api_key: str, base_url: str, timeout: float = 8.0):
+    def __init__(self, *, api_key: str, base_url: str, timeout: float = 8.0, strict: bool = False):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.strict = strict
+        self._hits: dict[str, KvkCompany] = {}
+        self._misses: set[str] = set()
 
     @classmethod
-    def from_settings(cls, settings) -> "KvkClient | PermissiveKvk | UnconfiguredKvk":
+    def from_settings(cls, settings) -> "KvkClient | PermissiveKvk":
         if os.getenv("PYTEST_CURRENT_TEST"):
             return PermissiveKvk()
         key = getattr(settings, "kvk_api_key", "") or ""
         override = getattr(settings, "kvk_base_url", "") or ""
         if key:
-            return cls(api_key=key, base_url=override or PRODUCTION_BASE)
-        if getattr(settings, "production", False):
-            return UnconfiguredKvk()
-        return cls(api_key=TEST_API_KEY, base_url=override or TEST_BASE)
+            return cls(api_key=key, base_url=override or PRODUCTION_BASE, strict=True)
+        return cls(api_key=TEST_API_KEY, base_url=override or TEST_BASE, strict=False)
 
     def lookup(self, kvk_number: str) -> KvkCompany:
         number = re.sub(r"\D", "", kvk_number or "")
         if len(number) != 8:
             raise KvkNotFound()
-        url = f"{self.base_url}/api/v2/zoeken"
+        if number in self._hits:
+            return self._hits[number]
+        if number in self._misses:
+            raise KvkNotFound()
+        if self.strict:
+            company = self._zoeken(self.base_url, number)
+            self._hits[number] = company
+            return company
+        company = self._lookup_public(number)
+        self._hits[number] = company
+        return company
+
+    def _lookup_public(self, number: str) -> KvkCompany:
+        last: KvkError | None = None
+        for source in (self._bedrijfsdata, self._zoeken_current, self._opendata):
+            try:
+                return source(number)
+            except KvkInactive:
+                raise
+            except KvkNotFound as error:
+                last = error
+            except (KvkUnavailable, KvkBusy, KvkNotConfigured) as error:
+                last = error
+        self._misses.add(number)
+        if isinstance(last, (KvkBusy, KvkUnavailable)):
+            raise last
+        raise KvkNotFound()
+
+    def _zoeken_current(self, number: str) -> KvkCompany:
+        return self._zoeken(self.base_url, number)
+
+    def _zoeken(self, base_url: str, number: str) -> KvkCompany:
+        url = f"{base_url.rstrip('/')}/api/v2/zoeken"
         try:
             response = httpx.get(
                 url,
@@ -200,25 +307,83 @@ class KvkClient:
             raise KvkNotFound()
         return company_from_results(number, results)
 
+    def _bedrijfsdata(self, number: str) -> KvkCompany:
+        try:
+            response = httpx.get(
+                BEDRIJFSDATA_URL,
+                params={"kvk": number},
+                headers={"Accept": "application/json"},
+                timeout=self.timeout,
+            )
+        except httpx.HTTPError as error:
+            logger.warning("Bedrijfsdata lookup mislukt: %s", error)
+            raise KvkUnavailable() from error
+        if response.status_code == 404:
+            raise KvkNotFound()
+        if response.status_code == 429:
+            raise KvkBusy()
+        if response.status_code >= 400:
+            logger.warning("Bedrijfsdata gaf %s", response.status_code)
+            raise KvkUnavailable()
+        return company_from_bedrijfsdata(number, response.json())
+
+    def _opendata(self, number: str) -> KvkCompany:
+        url = f"{OPENDATA_URL}/{number}"
+        try:
+            response = httpx.get(
+                url,
+                headers={"Accept": "application/json"},
+                timeout=self.timeout,
+            )
+        except httpx.HTTPError as error:
+            logger.warning("KVK open data mislukt: %s", error)
+            raise KvkUnavailable() from error
+        if response.status_code == 404:
+            self._misses.add(number)
+            raise KvkNotFound()
+        if response.status_code == 429:
+            raise KvkBusy()
+        if response.status_code >= 400:
+            logger.warning("KVK open data gaf %s", response.status_code)
+            raise KvkUnavailable()
+        return company_from_opendata(number, response.json())
+
     def require(self, kvk_number: str, company_name: str) -> KvkCompany:
-        company = self.lookup(kvk_number)
+        try:
+            company = self.lookup(kvk_number)
+        except (KvkNotFound, KvkUnavailable, KvkBusy, KvkNotConfigured):
+            if self.strict:
+                raise
+            return declared_company(kvk_number, company_name)
         if company.match_any_name:
-            return company
+            return KvkCompany(
+                kvk_number=company.kvk_number,
+                name=company_name or company.name,
+                names=list(company.names) + ([company_name] if company_name else []),
+                city=company.city,
+                street=company.street,
+                match_any_name=True,
+                verified=company.verified,
+            )
         if not names_match(company_name, company.names or [company.name]):
             raise KvkNameMismatch(company)
         return company
 
 
 class UnconfiguredKvk:
+    strict = False
+
     def lookup(self, kvk_number: str) -> KvkCompany:
         raise KvkNotConfigured()
 
     def require(self, kvk_number: str, company_name: str) -> KvkCompany:
-        raise KvkNotConfigured()
+        return declared_company(kvk_number, company_name)
 
 
 class PermissiveKvk:
     """Laat testdata door zonder het live Handelsregister aan te roepen."""
+
+    strict = False
 
     def lookup(self, kvk_number: str) -> KvkCompany:
         number = re.sub(r"\D", "", kvk_number or "")
@@ -244,6 +409,8 @@ class PermissiveKvk:
 
 
 class MemoryKvk:
+    strict = True
+
     def __init__(self, records: dict[str, KvkCompany] | None = None):
         self.records = records or {}
 

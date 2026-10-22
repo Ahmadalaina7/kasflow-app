@@ -310,6 +310,7 @@ textarea{ min-height:104px; resize:vertical; }
 }
 .field-hint{ font-size:0.78rem; color:var(--ink-500); margin-top:6px; line-height:1.5; }
 #kvk-status[data-tone="error"]{ color:var(--danger); }
+#kvk-status[data-tone="warning"]{ color:#8A6A24; }
 #kvk-status[data-tone="success"]{ color:var(--emerald-600); }
 .form-grid{
   display:grid; gap:22px;

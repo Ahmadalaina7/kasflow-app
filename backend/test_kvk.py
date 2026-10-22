@@ -2,7 +2,83 @@ from fastapi.testclient import TestClient
 
 from app import create_app
 from config import Settings
-from kvk import KvkCompany, MemoryKvk, names_match
+from kvk import (
+    KvkClient,
+    KvkCompany,
+    KvkInactive,
+    KvkNotFound,
+    MemoryKvk,
+    company_from_bedrijfsdata,
+    company_from_opendata,
+    names_match,
+)
+
+
+def test_bedrijfsdata_picks_the_hoofdvestiging_and_city():
+    company = company_from_bedrijfsdata(
+        "89395808",
+        {
+            "status": "ok",
+            "found": 2,
+            "kvk": [
+                {
+                    "coc": "89395808",
+                    "name": "Nevenvestiging",
+                    "city": "Utrecht",
+                    "type": "Nevenvestiging",
+                    "active": 1,
+                },
+                {
+                    "coc": "89395808",
+                    "name": "Bedrijfsdata.nl B.V.",
+                    "city": "Amsterdam",
+                    "type": "Hoofdvestiging",
+                    "active": 1,
+                },
+            ],
+        },
+    )
+    assert company.name == "Bedrijfsdata.nl B.V."
+    assert company.city == "Amsterdam"
+    assert company.verified is True
+    assert "Nevenvestiging" in company.names
+
+
+def test_bedrijfsdata_rejects_inactive_and_unknown_numbers():
+    try:
+        company_from_bedrijfsdata(
+            "11111111",
+            {"status": "ok", "found": 0, "kvk": []},
+        )
+    except KvkNotFound:
+        pass
+    else:
+        raise AssertionError("unknown number should be rejected")
+    try:
+        company_from_bedrijfsdata(
+            "11111111",
+            {"kvk": [{"name": "Was", "city": "X", "type": "Hoofdvestiging", "active": 0}]},
+        )
+    except KvkInactive:
+        return
+    raise AssertionError("inactive company should be rejected")
+
+
+def test_opendata_accepts_an_active_bv_without_a_public_name():
+    company = company_from_opendata(
+        "24330087",
+        {"actief": "J", "rechtsvormCode": "BV", "postcodeRegio": 30},
+    )
+    assert company.match_any_name is True
+    assert company.kvk_number == "24330087"
+
+
+def test_opendata_rejects_an_inactive_registration():
+    try:
+        company_from_opendata("24330087", {"actief": "N"})
+    except KvkInactive:
+        return
+    raise AssertionError("inactive company should be rejected")
 
 
 def test_company_names_match_trade_name_and_legal_form():
@@ -100,3 +176,49 @@ def test_signup_from_a_foreign_origin_is_rejected(tmp_path):
     )
     assert response.status_code == 403
     assert response.json()["detail"] == "Ongeldige aanvraag"
+
+
+class _NoDirectory(KvkClient):
+    def lookup(self, kvk_number):
+        raise KvkNotFound()
+
+
+def test_without_kvk_api_key_an_unknown_number_can_still_register(tmp_path):
+    database = tmp_path / "soft.sqlite3"
+    settings = Settings(
+        env="development",
+        secret_key="s" * 48,
+        database_url=f"sqlite:///{database.as_posix()}",
+        upload_dir=tmp_path / "uploads",
+    )
+    kvk = _NoDirectory(api_key="x", base_url="https://example.invalid", strict=False)
+    client = TestClient(create_app(settings=settings, kvk=kvk, upload_dir=tmp_path / "uploads"))
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": "zzp@example.nl",
+            "password": "correct-horse-battery-staple",
+            "company_name": "Ahmad Klussen",
+            "kvk_number": "87654321",
+            "terms": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["company_name"] == "Ahmad Klussen"
+    assert response.json()["kvk_number"] == "87654321"
+
+
+def test_lookup_without_api_key_lets_unknown_numbers_continue(tmp_path):
+    database = tmp_path / "soft-lookup.sqlite3"
+    settings = Settings(
+        env="development",
+        secret_key="s" * 48,
+        database_url=f"sqlite:///{database.as_posix()}",
+        upload_dir=tmp_path / "uploads",
+    )
+    kvk = _NoDirectory(api_key="x", base_url="https://example.invalid", strict=False)
+    client = TestClient(create_app(settings=settings, kvk=kvk, upload_dir=tmp_path / "uploads"))
+    response = client.get("/api/kvk/lookup", params={"kvk_number": "87654321"})
+    assert response.status_code == 200
+    assert response.json()["verified"] is False
+    assert response.json()["kvk_number"] == "87654321"
