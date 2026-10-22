@@ -104,6 +104,20 @@ sudo systemctl status kasflow
 `User=` is de Plesk-systeemgebruiker van het abonnement. De app luistert alleen
 op `127.0.0.1:8010` (niet bereikbaar vanaf internet).
 
+Geen root / geen systemd (typisch op LiteSpeed-shared hosting)? Start als de
+Plesk-gebruiker, zonder `sudo`:
+
+```bash
+cd /var/www/vhosts/webnestiq.nl/kasflow-app.webnestiq.nl
+# of: de documentroot waar signup.html en proxy.php staan
+bash plesk/start.sh
+```
+
+Zet in Plesk een **geplande taak** op `bash /pad/naar/kasflow/plesk/start.sh`
+elke minuut: die start de app opnieuw als hij is gestopt. Zonder dit proces
+blijft `/api/health` zeggen dat poort 8010 niet luistert, terwijl signup.html
+wél laadt.
+
 ```bash
 curl -sS http://127.0.0.1:8010/api/health
 ```
