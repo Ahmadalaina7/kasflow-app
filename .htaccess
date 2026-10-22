@@ -1,11 +1,11 @@
-# Apache / LiteSpeed: stuur /api naar Kasflow (gunicorn op 127.0.0.1:8010).
-# Zonder deze regel geeft registreren "fout 404" terwijl de HTML wél laadt.
-# Nginx-only (Plesk proxymodus uit): plak plesk/nginx-additional.conf; dit
-# bestand wordt daar genegeerd.
+# /api draait als CGI (kasflow.cgi), zodat Git-deploy werkt zonder poort 8010
+# en zonder systemd. LiteSpeed voert .cgi uit als de abonnement-gebruiker.
+
+AddHandler cgi-script .cgi
 
 RewriteEngine On
 RewriteRule ^\.well-known/ - [L]
-RewriteRule ^api(/.*)?$ proxy.php [L,QSA]
+RewriteRule ^api(/.*)?$ kasflow.cgi [L,QSA]
 
 <Files ".env">
     <IfModule mod_authz_core.c>
