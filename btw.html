@@ -13,6 +13,21 @@
 <link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="app-styles.css">
+<style>
+  #print-head { display: none; }
+  @media print {
+    @page { margin: 16mm; }
+    body { background: #fff; }
+    .sidebar, .topbar-actions, .form-note, .alert, .pill, #check-panel, #icp-panel .no-print { display: none !important; }
+    .app-shell { display: block; }
+    .main { padding: 0; max-width: none; }
+    .panel { break-inside: avoid; box-shadow: none; }
+    a { color: inherit; text-decoration: none; }
+    #print-head { display: block; margin-bottom: 18px; }
+    #print-head h2 { margin: 0 0 4px; font-size: 18px; }
+    #print-head p { margin: 0; color: #444; font-size: 13px; }
+  }
+</style>
 </head>
 <body data-page="btw">
 
@@ -30,7 +45,9 @@
         <div class="topbar-sub" id="vat-summary">Btw-gegevens laden…</div>
       </div>
       <div class="topbar-actions">
-        <a href="facturen.html" class="btn btn-outline">Naar facturen</a>
+        <a href="factuur.html?extern=1" class="btn btn-outline">Factuur van elders</a>
+        <button type="button" class="btn btn-outline" id="copy-button">Kopieer bedragen</button>
+        <button type="button" class="btn btn-outline" id="print-button">Print / pdf</button>
         <button type="button" class="btn btn-primary" id="approve-button" disabled>Concept goedkeuren</button>
       </div>
     </div>
@@ -39,7 +56,13 @@
       <div><strong>Dit is je kwartaalaangifte omzetbelasting.</strong> Neem de hele euro's hieronder over in
       Mijn Belastingdienst Zakelijk. De bedragen komen uit je facturen (factuurdatum) en je bonnetjes, inclusief
       btw die naar jou is verlegd (Google, EU-leveranciers, rubriek 2a/4). Privégebruik en een suppletie vullen
-      je zelf in als die voorkomen. Kasflow dient niet zelf in.</div>
+      je zelf in als die voorkomen. Kasflow dient niet zelf in: met <em>Kopieer bedragen</em> zet je ze in het
+      formulier van de Belastingdienst en met <em>Print / pdf</em> bewaar je het overzicht bij je administratie.</div>
+    </div>
+
+    <div id="print-head">
+      <h2 id="print-title">Btw-aangifte</h2>
+      <p id="print-meta">Kasflow</p>
     </div>
 
     <p id="vat-feedback" class="form-note" role="status" aria-live="polite"></p>
@@ -69,7 +92,10 @@
     <section class="panel">
       <div class="panel-head">
         <h2 id="rate-title">Aangifte omzetbelasting</h2>
-        <span class="pill muted" id="rate-period">—</span>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button type="button" class="btn btn-outline btn-sm" id="csv-button">Facturen als CSV</button>
+          <span class="pill muted" id="rate-period">—</span>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -128,6 +154,10 @@
   const approveButton = document.getElementById('approve-button');
   let overview = null;
   let selected = 0;
+  let companyName = 'Kasflow';
+  const copyButton = document.getElementById('copy-button');
+  const printButton = document.getElementById('print-button');
+  const csvButton = document.getElementById('csv-button');
 
   // The return to file now is the last finished quarter, until its deadline passes.
   function defaultSelection(quarters) {
@@ -174,6 +204,11 @@
 
     document.getElementById('rate-period').textContent = quarter.label;
     document.getElementById('rate-title').textContent = 'Aangifte omzetbelasting — ' + quarter.label;
+    document.getElementById('print-title').textContent = 'Btw-aangifte ' + quarter.label + ' — ' + companyName;
+    document.getElementById('print-meta').textContent =
+      'Periode ' + formatShortDate(quarter.start_date) + ' t/m ' + formatShortDate(quarter.end_date) +
+      ' · afgedrukt op ' + formatShortDate(Kasflow.todayIso()) +
+      (quarter.approved_at ? ' · afgevinkt' : '');
     document.getElementById('rate-deadline').textContent = formatShortDate(quarter.deadline);
 
     const lines = quarter.form || [];
@@ -248,6 +283,111 @@
     return money((Number(value) || 0) * 100).replace(',00', '');
   }
 
+  // Hele euro's zonder euroteken: dat is wat je in het formulier intypt.
+  function whole(value) {
+    return String(Number(value) || 0);
+  }
+
+  function selectedQuarter() {
+    return overview.quarters[selected];
+  }
+
+  // Alles wat Mijn Belastingdienst Zakelijk per rubriek vraagt, als platte tekst.
+  function clipboardText() {
+    const quarter = selectedQuarter();
+    const lines = [
+      'Btw-aangifte ' + quarter.label + ' — ' + companyName,
+      'Periode ' + formatShortDate(quarter.start_date) + ' t/m ' + formatShortDate(quarter.end_date)
+    ];
+    if (quarter.kor) {
+      lines.push('Kleineondernemersregeling: geen aangifte en geen voorbelasting.');
+      return lines.join('\n');
+    }
+    (quarter.form || []).forEach(line => {
+      if (line.code === '5a' || line.code === '5b' || line.code === '5c') return;
+      if (!line.base_euros && !line.vat_euros) return;
+      lines.push(
+        line.code + ' ' + line.label + ': omzet ' + whole(line.base_euros) +
+        (line.vat_euros == null ? '' : ', btw ' + whole(line.vat_euros))
+      );
+    });
+    const byCode = Object.fromEntries((quarter.form || []).map(line => [line.code, line]));
+    lines.push('');
+    lines.push('5a Verschuldigde omzetbelasting: ' + whole(byCode['5a'] && byCode['5a'].vat_euros));
+    lines.push('5b Voorbelasting: ' + whole(byCode['5b'] && byCode['5b'].vat_euros));
+    lines.push('5c ' + (quarter.form_total_euros < 0 ? 'Terug te vragen: ' : 'Te betalen: ') +
+      whole(Math.abs(quarter.form_total_euros || 0)));
+    return lines.join('\n');
+  }
+
+  async function copyAmounts() {
+    const text = clipboardText();
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.append(area);
+        area.select();
+        document.execCommand('copy');
+        area.remove();
+      }
+      note(feedback, 'Bedragen gekopieerd. Plak ze in Mijn Belastingdienst Zakelijk.', 'success');
+    } catch (error) {
+      note(feedback, 'Kopiëren lukte niet. Selecteer de bedragen in de tabel en kopieer ze met de hand.', 'error');
+    }
+  }
+
+  function csvCell(value) {
+    return '"' + String(value == null ? '' : value).replace(/"/g, '""') + '"';
+  }
+
+  function csvMoney(cents) {
+    return (Number(cents || 0) / 100).toFixed(2).replace('.', ',');
+  }
+
+  // De facturen van dit kwartaal als CSV, voor de administratie naast de aangifte.
+  async function downloadInvoices() {
+    const quarter = selectedQuarter();
+    setBusy(csvButton, true, 'Bezig…');
+    try {
+      const [invoices, customers] = await Promise.all([api('/api/invoices'), api('/api/customers')]);
+      const names = new Map(customers.map(customer => [customer.id, customer.name]));
+      const rows = invoices.filter(invoice =>
+        invoice.invoice_date >= quarter.start_date && invoice.invoice_date <= quarter.end_date);
+      const head = ['Factuurnummer', 'Factuurdatum', 'Klant', 'Netto', 'Btw', 'Totaal', 'Btw-behandeling', 'Status'];
+      const body = rows.map(invoice => [
+        invoice.number,
+        invoice.invoice_date,
+        names.get(invoice.customer_id) || '',
+        csvMoney(invoice.subtotal_cents),
+        csvMoney(invoice.vat_cents),
+        csvMoney(invoice.total_cents),
+        invoice.vat_treatment,
+        invoice.status
+      ]);
+      const csv = [head, ...body].map(row => row.map(csvCell).join(';')).join('\r\n');
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'kasflow-facturen-' + quarter.year + '-q' + quarter.quarter + '.csv';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      note(feedback, rows.length + (rows.length === 1 ? ' factuur' : ' facturen') + ' gedownload.', 'success');
+    } catch (error) {
+      note(feedback, error.message, 'error');
+    } finally {
+      setBusy(csvButton, false);
+    }
+  }
+
   async function loadVat() {
     try {
       overview = await api('/api/vat');
@@ -258,6 +398,10 @@
       summary.textContent = 'Btw-gegevens tijdelijk niet beschikbaar.';
     }
   }
+
+  copyButton.addEventListener('click', copyAmounts);
+  printButton.addEventListener('click', () => window.print());
+  csvButton.addEventListener('click', downloadInvoices);
 
   document.getElementById('vat-table-body').addEventListener('click', event => {
     const trigger = event.target.closest('[data-quarter]');
@@ -292,7 +436,12 @@
     }
   });
 
-  Kasflow.ready.then(loadVat);
+  Kasflow.ready
+    .then(user => {
+      companyName = (user && user.company_name) || 'Kasflow';
+      return loadVat();
+    })
+    .catch(error => note(feedback, error.message, 'error'));
 })();
 </script>
 

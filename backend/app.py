@@ -786,6 +786,10 @@ class InvoiceInput(BaseModel):
     delivery_date: date | None = None
     note: Annotated[str | None, Field(max_length=1000)] = None
     vat_treatment: Literal["standard", "reverse_charge", "intra_eu", "export"] = "standard"
+    # Een factuur die de ondernemer al zelf naar de klant stuurde, bijvoorbeeld
+    # vanuit een ander programma. Die telt mee voor de btw-aangifte, maar
+    # Kasflow verstuurt er niets van.
+    sent: bool = False
     lines: Annotated[list[InvoiceLineInput], Field(min_length=1, max_length=100)]
 
     @field_validator("number")
@@ -2785,6 +2789,7 @@ def create_app(
             vat_cents=vat_cents,
             total_cents=subtotal_cents + vat_cents,
             vat_treatment=treatment,
+            sent_at=utcnow() if payload.sent else None,
             supplier_snapshot=json.dumps(supplier, ensure_ascii=False),
             customer_snapshot=json.dumps(recipient, ensure_ascii=False),
             lines=stored_lines,

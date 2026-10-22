@@ -413,6 +413,30 @@ def previous_quarter_day():
     return date(today.year, start_month, 1) - timedelta(days=1)
 
 
+def test_invoice_marked_as_already_sent_counts_for_the_vat_return(tmp_path):
+    """Een factuur die de ondernemer elders verstuurde, telt mee voor de btw."""
+    client = client_for(tmp_path)
+    register(client)
+    customer = create_customer(client)
+    response = client.post(
+        "/api/invoices", json=invoice_payload(customer["id"], "2026-100", date.today(), sent=True)
+    )
+    assert response.status_code == 201, response.text
+    invoice = response.json()
+    assert invoice["sent_at"] is not None
+    assert invoice["status"] == "pending"
+
+    quarter = client.get("/api/vat").json()["current"]
+    assert quarter["invoice_count"] == 1
+    assert quarter["vat_cents"] == 2100
+    line = next(item for item in quarter["form"] if item["code"] == "1a")
+    assert line["base_euros"] == 100
+    assert line["vat_euros"] == 21
+
+    fresh = create_invoice(client, customer["id"], "2026-101")
+    assert fresh["sent_at"] is None
+
+
 def test_approved_vat_quarter_is_locked_for_invoices_and_receipts(tmp_path):
     client = client_for(tmp_path)
     register(client)

@@ -76,6 +76,13 @@
             <input id="delivery-date" class="field-control" type="date">
             <div class="field-hint">De datum waarop je het werk hebt geleverd. Verplicht op de factuur als die afwijkt van de factuurdatum.</div>
           </div>
+          <div class="field-group" style="margin-top:18px">
+            <label class="consent-row">
+              <input type="checkbox" id="already-sent">
+              <span><strong>Deze factuur heb ik al verstuurd.</strong> Kasflow mailt dan niets, maar de factuur telt
+              wel mee voor je btw-aangifte. Handig voor facturen die je eerder in een ander programma maakte.</span>
+            </label>
+          </div>
           <div class="field-group" style="margin-top:18px" id="treatment-group">
             <label class="field-label" for="vat-treatment">Btw-behandeling</label>
             <select id="vat-treatment" class="field-control">
@@ -150,6 +157,7 @@
   const deliveryDate = document.getElementById('delivery-date');
   const invoiceNote = document.getElementById('invoice-note');
   const saveButton = document.getElementById('save-invoice');
+  const alreadySent = document.getElementById('already-sent');
   const customerAlert = document.getElementById('customer-alert');
   const treatmentSelect = document.getElementById('vat-treatment');
   const treatmentHint = document.getElementById('treatment-hint');
@@ -311,6 +319,7 @@
     const params = new URLSearchParams(window.location.search);
     const requestedCustomer = params.get('customer');
     if (requestedCustomer) customerSelect.value = requestedCustomer;
+    if (params.get('extern') === '1') alreadySent.checked = true;
 
     if (nextNumber && nextNumber.number) {
       invoiceNumber.value = nextNumber.number;
@@ -416,6 +425,7 @@
           delivery_date: deliveryDate.value || null,
           note: invoiceNote.value.trim() || null,
           vat_treatment: korUser ? 'standard' : treatmentSelect.value,
+          sent: alreadySent.checked,
           lines
         }
       });

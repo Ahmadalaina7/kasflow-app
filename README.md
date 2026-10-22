@@ -57,7 +57,9 @@ verwijderen van een account en de migratie van een oud databaseschema.
   voldoet aan de factuureisen** en **verzenden per e-mail met de PDF als
   bijlage**. Een factuur kan pas worden opgeslagen als alle verplichte gegevens
   er zijn; bedrijfs- en klantgegevens worden bij het aanmaken vastgelegd, zodat
-  latere wijzigingen een uitgereikte factuur niet veranderen.
+  latere wijzigingen een uitgereikte factuur niet veranderen. Facturen die je
+  eerder in een ander programma maakte voeg je toe met **Deze factuur heb ik al
+  verstuurd**; Kasflow mailt dan niets, maar de btw telt gewoon mee.
 - **Creditfacturen** — een factuur wordt nooit gewijzigd of verwijderd; je
   crediteert hem volledig met één klik en maakt zo nodig een nieuwe.
 - **Btw-behandelingen** — normaal, btw verlegd (binnenland), intracommunautaire
@@ -69,7 +71,10 @@ verwijderen van een account en de migratie van een oud databaseschema.
   naar jou is verlegd (Google, EU-leveranciers, rubriek 2a/4a/4b).
 - **Btw & aangifte** — de kwartaalaangifte omzetbelasting in hele euro's, met
   rubrieken 1a t/m 5c, voorbelasting, verlegde btw op inkopen en de opgaaf ICP
-  bij intra-EU omzet. Je neemt de bedragen over in Mijn Belastingdienst Zakelijk.
+  bij intra-EU omzet. Je neemt de bedragen over in Mijn Belastingdienst Zakelijk;
+  **Kopieer bedragen** zet ze als platte tekst op je klembord, **Print / pdf**
+  bewaart het overzicht bij je administratie en **Facturen als CSV** geeft de
+  onderliggende facturen van dat kwartaal.
 - **Bank** — CAMT.053 of CSV-afschrift importeren, betalingen koppelen aan
   facturen, privé-uitgaven apart zetten.
 - **Uren & kilometers** — registratie voor het urencriterium (1.225 uur) en
