@@ -109,8 +109,16 @@
         body: JSON.stringify({ email, password })
       });
       if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        const message = error && error.detail ? error.detail : 'Inloggen is niet gelukt.';
+        const body = await response.text();
+        let error = null;
+        try {
+          error = body ? JSON.parse(body) : null;
+        } catch {
+          console.error('Onverwacht antwoord van de server:', response.status, body.slice(0, 300));
+        }
+        const message = error && error.detail
+          ? error.detail
+          : `De server gaf geen geldig antwoord (fout ${response.status}). Draait de app wel op deze hosting?`;
         if (response.status === 403) {
           Kasflow.note(feedback, message + ' Vraag een nieuwe link aan of registreer opnieuw.', 'warning');
           Kasflow.setBusy(submit, false);

@@ -228,13 +228,36 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const result = await response.json().catch(() => null);
+      const body = await response.text();
+      let result = null;
+      try {
+        result = body ? JSON.parse(body) : null;
+      } catch {
+        // Geen JSON: dan komt het antwoord van een proxy of is de server
+        // gecrasht. Zonder deze regel blijft alleen "niet gelukt" over en is de
+        // echte oorzaak onvindbaar.
+        console.error('Onverwacht antwoord van de server:', response.status, body.slice(0, 300));
+      }
       if (!response.ok) {
         const detail = result && result.detail;
-        const message = Array.isArray(detail) && detail.length
-          ? detail[0].msg || 'Controleer je gegevens.'
-          : (detail || 'Account aanmaken is niet gelukt.');
+        let message;
+        if (Array.isArray(detail) && detail.length) {
+          message = detail[0].msg || 'Controleer je gegevens.';
+        } else if (detail) {
+          message = detail;
+        } else if (!result) {
+          // Een HTML-antwoord in plaats van JSON: dan praat de pagina met een
+          // webserver die de app niet draait (statische hosting, verkeerde
+          // documentroot, proxy-fout). Dat is een andere fout dan een fout in
+          // het formulier en moet dus anders klinken.
+          message = `De server gaf geen geldig antwoord (fout ${response.status}). Draait de app wel op deze hosting?`;
+        } else {
+          message = `Account aanmaken is niet gelukt (fout ${response.status}).`;
+        }
         throw new Error(message);
+      }
+      if (!result) {
+        throw new Error(`De server gaf een onverwacht antwoord (${response.status}). Probeer het opnieuw.`);
       }
       if (result && result.verification_required) {
         document.getElementById('done-email').textContent = result.email;
