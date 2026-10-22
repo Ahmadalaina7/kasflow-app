@@ -125,6 +125,9 @@ Open `https://app.jouwdomein.nl/api/health` in de browser.
 
 ## 4. Methode B — Passenger (als systemd niet mag)
 
+Alleen op een domein dat door **Apache of nginx** wordt geserveerd; op LiteSpeed
+werkt deze route niet (zie hierboven).
+
 1. Kopieer [`plesk/htaccess`](plesk/htaccess) naar `.htaccess` in de projectroot.
 2. Zet `PassengerPython` in dat bestand op jouw `venv/bin/python`.
 3. **Hostinginstellingen**: documentroot op de map `kasflow` (niet `httpdocs`).
@@ -138,19 +141,31 @@ Uploads en lange requests zijn hier minder betrouwbaar dan bij methode A.
 
 Sommige Plesk-abonnementen draaien LiteSpeed. Herken het aan de `Server:
 LiteSpeed`-regel in de antwoordheaders, en aan het ontbreken van **Aanvullende
-nginx-directives** bij Apache & nginx-instellingen. Dan werkt methode A niet.
+nginx-directives** bij de webserverinstellingen. Dan werkt methode A zoals
+hierboven beschreven niet, en methode B (Passenger) meestal ook niet: de
+Python-optie van Plesk gebruikt Phusion Passenger en is gedocumenteerd voor
+Apache en nginx. LiteSpeed ondersteunt Passenger alleen voor CloudLinux
+Selectors, kent de directive `PassengerEnabled` niet en accepteert de meeste
+`Passenger*`-directives niet in `.htaccess`.
 
-Controleer eerst of **Python** in het Plesk-menu bij het domein staat:
+Op LiteSpeed werkt daarom dezelfde opzet als methode A, met een andere
+webserverconfiguratie:
 
-- **Wel Python**: gebruik methode B (Passenger + `.htaccess`). Zet de
-documentroot op de projectroot, niet op `httpdocs`.
-- **Geen Python**: dit abonnement kan geen Python-proces draaien. Kies dan een
-  VPS met Docker ([DEPLOY.md](DEPLOY.md)) en laat het domein daarheen wijzen.
+1. Start de app als service op `127.0.0.1:8010` (methode A, stap 3a). Heb je
+   geen root, dan kan dit niet en is een VPS met Docker de route.
+2. Plak [`plesk/litespeed-proxy.conf`](plesk/litespeed-proxy.conf) bij
+   **Aanvullende directives voor HTTPS** van het domein. Daarin staat een
+   `RewriteRule ... [P,L]` naar de app, de LiteSpeed-vorm van reverse proxy.
+3. Zet in `.env` `KASFLOW_ALLOWED_HOSTS` op je domein. Blijkt de proxy de
+   `Host`-header te vervangen, voeg dan `127.0.0.1:8010` toe; anders geeft de
+   app een 400 Invalid host.
+4. Test `https://jouwdomein.nl/api/health`. Alleen `{"status":"ok"}` betekent
+   dat de app echt draait.
 
 Uploaden van alleen de HTML-bestanden is nooit genoeg: dan laadt de pagina wel,
-maar antwoordt `/api/health` met een 404-pagina van de webserver en mislukken
-inloggen en registreren. Test na elke deploy `https://jouwdomein.nl/api/health`:
-alleen `{"status":"ok"}` betekent dat de app echt draait.
+maar antwoordt `/api/...` met een 404-pagina van de webserver en mislukken
+inloggen en registreren. Doe deze controle na elke deploy.
+
 
 ## 5. E-mail
 

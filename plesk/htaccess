@@ -1,4 +1,6 @@
-# Alleen nodig bij de Passenger-route (methode B in PLESK.md).
+# Alleen nodig bij de Passenger-route (methode B in PLESK.md), en alleen op
+# een domein dat door Apache of nginx wordt geserveerd. Op LiteSpeed werkt dit
+# niet: gebruik daar plesk/litespeed-proxy.conf met een service op 127.0.0.1:8010.
 # Kopieer naar de projectroot als .htaccess:
 #   cp plesk/htaccess .htaccess
 
