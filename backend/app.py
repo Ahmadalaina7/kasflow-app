@@ -6,12 +6,14 @@ import io
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -83,6 +85,7 @@ from billing import (
 from bank_import import StatementError, parse_statement
 from config import Settings
 from invoice_pdf import InvoiceLineData, InvoicePdfData, Party, build_invoice_pdf
+from kvk import KvkClient, KvkError
 from mailer import Mailer
 from migrations import run_migrations
 from receipt_parse import parse_receipt_file
@@ -496,11 +499,18 @@ class CustomerOutput(CustomerInput):
     id: int
 
 
+def digits_kvk(value: str) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) != 8:
+        raise ValueError("Vul een KVK-nummer van 8 cijfers in")
+    return digits
+
+
 class RegisterInput(BaseModel):
     email: Annotated[str, Field(min_length=3, max_length=320)]
     password: Annotated[str, Field(min_length=12, max_length=1024)]
     company_name: Annotated[str, Field(min_length=1, max_length=200)]
-    kvk_number: Annotated[str, Field(pattern=r"^[0-9]{8}$")]
+    kvk_number: Annotated[str, Field(min_length=8, max_length=16)]
     vat_number: Annotated[str | None, Field(max_length=20)] = None
     terms: bool
 
@@ -511,6 +521,18 @@ class RegisterInput(BaseModel):
         if "@" not in normalized or "." not in normalized.split("@")[-1]:
             raise ValueError("Vul een geldig e-mailadres in")
         return normalized
+
+    @field_validator("password")
+    @classmethod
+    def strong_password(cls, value: str) -> str:
+        if len(value) < 12:
+            raise ValueError("Kies een wachtwoord van minimaal 12 tekens")
+        return value
+
+    @field_validator("kvk_number")
+    @classmethod
+    def normalize_kvk(cls, value: str) -> str:
+        return digits_kvk(value)
 
     @field_validator("company_name", "vat_number")
     @classmethod
@@ -575,8 +597,13 @@ class UserOutput(BaseModel):
 
 class CompanyCreateInput(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=200)]
-    kvk_number: Annotated[str, Field(pattern=r"^[0-9]{8}$")]
+    kvk_number: Annotated[str, Field(min_length=8, max_length=16)]
     vat_number: Annotated[str | None, Field(max_length=20)] = None
+
+    @field_validator("kvk_number")
+    @classmethod
+    def normalize_company_kvk(cls, value: str) -> str:
+        return digits_kvk(value)
 
     @field_validator("name", "vat_number")
     @classmethod
@@ -1193,30 +1220,17 @@ def create_app(
     mailer: Mailer | None = None,
     upload_dir: Path | None = None,
     billing: MollieClient | None = None,
+    kvk=None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
     if database_url:
-        settings = Settings(
-            env=settings.env,
-            secret_key=settings.secret_key,
+        settings = replace(
+            settings,
             database_url=database_url,
-            public_url=settings.public_url,
             upload_dir=upload_dir or settings.upload_dir,
-            allowed_hosts=settings.allowed_hosts,
-            session_max_age=settings.session_max_age,
-            max_upload_bytes=settings.max_upload_bytes,
         )
     if upload_dir is not None:
-        settings = Settings(
-            env=settings.env,
-            secret_key=settings.secret_key,
-            database_url=settings.database_url,
-            public_url=settings.public_url,
-            upload_dir=upload_dir,
-            allowed_hosts=settings.allowed_hosts,
-            session_max_age=settings.session_max_age,
-            max_upload_bytes=settings.max_upload_bytes,
-        )
+        settings = replace(settings, upload_dir=upload_dir)
     settings.validate()
 
     if not logging.getLogger().handlers:
@@ -1238,6 +1252,7 @@ def create_app(
 
     mailer = mailer or Mailer()
     billing_client = billing or MollieClient(settings.mollie_api_key)
+    kvk_client = kvk if kvk is not None else KvkClient.from_settings(settings)
     upload_root = Path(settings.upload_dir)
     upload_root.mkdir(parents=True, exist_ok=True)
     limiter = RateLimiter()
@@ -1263,9 +1278,21 @@ def create_app(
     app.state.settings = settings
     app.state.mailer = mailer
     app.state.billing = billing_client
+    app.state.kvk = kvk_client
     app.state.limiter = limiter
     app.state.web_root = web_root
     app.state.upload_root = upload_root
+
+    def origin_allowed(origin: str, request: Request) -> bool:
+        """Allow the public hostname even when nginx talks to gunicorn as localhost."""
+        hostname = (urlparse(origin).hostname or "").lower()
+        if not hostname:
+            return False
+        request_host = (request.headers.get("host") or "").split(":")[0].lower()
+        allowed = {request_host, (settings.host or "").lower()}
+        allowed.update(host.split(":")[0].lower() for host in settings.allowed_hosts)
+        allowed.discard("")
+        return hostname in allowed
 
     if settings.allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
@@ -1282,10 +1309,8 @@ def create_app(
     async def security_guard(request: Request, call_next):
         if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith("/api/"):
             origin = request.headers.get("origin")
-            if origin:
-                origin_host = urlparse(origin).netloc
-                if not origin_host or origin_host != request.headers.get("host"):
-                    return JSONResponse(status_code=403, content={"detail": "Ongeldige aanvraag"})
+            if origin and not origin_allowed(origin, request):
+                return JSONResponse(status_code=403, content={"detail": "Ongeldige aanvraag"})
         response = await call_next(request)
         headers = response.headers
         headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -1324,6 +1349,15 @@ def create_app(
 
     def audit(session: Session, user_id: int | None, action: str, detail: str | None, ip: str | None) -> None:
         session.add(AuditEvent(owner_id=user_id, action=action, detail=detail, ip=ip))
+
+    def raise_kvk(error: KvkError) -> None:
+        raise HTTPException(status_code=error.status_code, detail=error.message) from error
+
+    def checked_company(kvk_number: str, company_name: str):
+        try:
+            return kvk_client.require(kvk_number, company_name)
+        except KvkError as error:
+            raise_kvk(error)
 
     def enforce(request: Request, scope: str, limit: int, window: int, extra: str = "") -> None:
         key = f"{scope}:{client_ip(request)}:{extra}"
@@ -2046,44 +2080,55 @@ def create_app(
 
     # -- Auth -------------------------------------------------------------
 
+    @app.get("/api/kvk/lookup")
+    def lookup_kvk(kvk_number: str, request: Request):
+        enforce(request, "kvk-lookup", 20, 3600)
+        try:
+            company = kvk_client.lookup(kvk_number)
+        except KvkError as error:
+            raise_kvk(error)
+        return company.as_public()
+
     @app.post("/api/auth/register", response_model=RegisterOutput, status_code=201)
     def register(
         payload: RegisterInput, request: Request, session: Session = Depends(get_session)
     ):
         enforce(request, "register", 5, 3600)
+        profile = checked_company(payload.kvk_number, payload.company_name)
         verified_at = None if mailer.configured else utcnow()
         user = User(
             email=payload.email,
             password_hash=hash_password(payload.password),
-            company_name=payload.company_name,
-            kvk_number=payload.kvk_number,
+            company_name=profile.name or payload.company_name,
+            kvk_number=profile.kvk_number,
             vat_number=payload.vat_number,
+            street=profile.street or None,
+            city=profile.city or None,
             email_verified_at=verified_at,
             terms_accepted_at=utcnow(),
         )
         session.add(user)
         try:
+            session.flush()
+            company = company_from_user(user)
+            session.add(company)
+            session.flush()
+            session.add(Membership(user_id=user.id, company_id=company.id, role="owner"))
+            session.add(
+                Subscription(
+                    company_id=company.id,
+                    plan=DEFAULT_PLAN,
+                    status="trialing",
+                    trial_ends_at=utcnow() + timedelta(days=TRIAL_DAYS),
+                )
+            )
+            audit(session, user.id, "account.register", None, client_ip(request))
             session.commit()
         except IntegrityError as error:
             session.rollback()
             raise HTTPException(
                 status_code=409, detail="Dit e-mailadres heeft al een account"
             ) from error
-        session.refresh(user)
-        company = company_from_user(user)
-        session.add(company)
-        session.flush()
-        session.add(Membership(user_id=user.id, company_id=company.id, role="owner"))
-        session.add(
-            Subscription(
-                company_id=company.id,
-                plan=DEFAULT_PLAN,
-                status="trialing",
-                trial_ends_at=utcnow() + timedelta(days=TRIAL_DAYS),
-            )
-        )
-        audit(session, user.id, "account.register", None, client_ip(request))
-        session.commit()
         session.refresh(user)
 
         verification_required = mailer.configured
@@ -3607,10 +3652,13 @@ def create_app(
         session: Session = Depends(get_session),
         user: User = Depends(get_current_user),
     ):
+        profile = checked_company(payload.kvk_number, payload.name)
         company = Company(
-            name=payload.name,
-            kvk_number=payload.kvk_number,
+            name=profile.name or payload.name,
+            kvk_number=profile.kvk_number,
             vat_number=payload.vat_number,
+            street=profile.street or None,
+            city=profile.city or None,
             created_by_id=user.id,
         )
         session.add(company)

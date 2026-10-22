@@ -58,19 +58,18 @@
 
       <div class="step-pane active" id="step-1">
         <div class="field-group">
-          <label class="field-label" for="company-name">Bedrijfsnaam</label>
-          <input id="company-name" class="field-control" type="text" placeholder="Studio Veer" maxlength="200" required>
+          <label class="field-label" for="kvk">KVK-nummer</label>
+          <input id="kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" placeholder="12345678" required>
+          <div class="field-hint">8 cijfers, zonder punten. We controleren het nummer bij KVK voordat het account bestaat.</div>
+          <p class="field-hint" id="kvk-status" role="status" aria-live="polite"></p>
         </div>
-        <div class="field-row">
-          <div>
-            <label class="field-label" for="kvk">KVK-nummer</label>
-            <input id="kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" placeholder="12345678" required>
-            <div class="field-hint">8 cijfers, zonder punten.</div>
-          </div>
-          <div>
-            <label class="field-label" for="vat">BTW-nummer (optioneel)</label>
-            <input id="vat" class="field-control" type="text" maxlength="20" placeholder="NL123456789B01">
-          </div>
+        <div class="field-group" style="margin-top:18px">
+          <label class="field-label" for="company-name">Bedrijfsnaam</label>
+          <input id="company-name" class="field-control" type="text" placeholder="Zoals ingeschreven bij KVK" maxlength="200" required>
+        </div>
+        <div class="field-group" style="margin-top:18px">
+          <label class="field-label" for="vat">BTW-nummer (optioneel)</label>
+          <input id="vat" class="field-control" type="text" maxlength="20" placeholder="NL123456789B01">
         </div>
       </div>
 
@@ -142,7 +141,12 @@
   const nextButton = document.getElementById('next-step');
   const feedback = document.getElementById('signup-feedback');
   const subtitles = ['Stap 1 van 3 — bedrijfsgegevens.', 'Stap 2 van 3 — je account.', 'Stap 3 van 3 — controleren en starten.'];
+  const kvkInput = document.getElementById('kvk');
+  const companyInput = document.getElementById('company-name');
+  const kvkStatus = document.getElementById('kvk-status');
   let activeIndex = 0;
+  let kvkTimer = 0;
+  let kvkLookup = null;
 
   fetch('/api/auth/me', { headers: { Accept: 'application/json' } })
     .then(response => {
@@ -168,8 +172,84 @@
     return steps[index].querySelector(':invalid');
   }
 
-  nextButton.addEventListener('click', () => {
+  function setKvkStatus(message, tone) {
+    kvkStatus.textContent = message || '';
+    kvkStatus.dataset.tone = tone || '';
+  }
+
+  function apiMessage(result, fallback) {
+    const detail = result && result.detail;
+    if (Array.isArray(detail) && detail.length) {
+      return String(detail[0].msg || fallback).replace(/^Value error, /i, '');
+    }
+    if (detail) return String(detail);
+    return fallback;
+  }
+
+  async function lookupKvk(number) {
+    const response = await fetch('/api/kvk/lookup?kvk_number=' + encodeURIComponent(number), {
+      headers: { Accept: 'application/json' }
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(apiMessage(result, 'Dit KVK-nummer konden we niet controleren.'));
+    }
+    return result;
+  }
+
+  async function ensureCompany() {
+    const number = kvkInput.value.replace(/\D/g, '');
+    if (number.length !== 8) {
+      setKvkStatus('Vul een KVK-nummer van 8 cijfers in.', 'error');
+      kvkInput.focus();
+      return false;
+    }
+    if (kvkLookup && kvkLookup.kvk_number === number) {
+      if (!companyInput.value.trim()) companyInput.value = kvkLookup.name || '';
+      return true;
+    }
+    setKvkStatus('Controleren bij KVK…');
+    try {
+      kvkLookup = await lookupKvk(number);
+      if (!companyInput.value.trim()) companyInput.value = kvkLookup.name || '';
+      const place = kvkLookup.city ? ', ' + kvkLookup.city : '';
+      setKvkStatus('Gevonden bij KVK: ' + (kvkLookup.name || number) + place, 'success');
+      return true;
+    } catch (error) {
+      kvkLookup = null;
+      setKvkStatus(error.message, 'error');
+      kvkInput.focus();
+      return false;
+    }
+  }
+
+  kvkInput.addEventListener('input', () => {
+    kvkLookup = null;
+    window.clearTimeout(kvkTimer);
+    const number = kvkInput.value.replace(/\D/g, '');
+    if (number.length !== 8) {
+      setKvkStatus('');
+      return;
+    }
+    kvkTimer = window.setTimeout(() => {
+      ensureCompany();
+    }, 350);
+  });
+
+  nextButton.addEventListener('click', async () => {
     if (activeIndex === steps.length - 1) return;
+    if (activeIndex === 0) {
+      const number = kvkInput.value.replace(/\D/g, '');
+      if (number.length !== 8) {
+        kvkInput.reportValidity();
+        kvkInput.focus();
+        return;
+      }
+      nextButton.disabled = true;
+      const ok = await ensureCompany();
+      nextButton.disabled = false;
+      if (!ok) return;
+    }
     const invalid = firstInvalidInStep(activeIndex);
     if (invalid) {
       invalid.reportValidity();
@@ -239,19 +319,10 @@
         console.error('Onverwacht antwoord van de server:', response.status, body.slice(0, 300));
       }
       if (!response.ok) {
-        const detail = result && result.detail;
-        let message;
-        if (Array.isArray(detail) && detail.length) {
-          message = detail[0].msg || 'Controleer je gegevens.';
-        } else if (detail) {
-          message = detail;
-        } else if (!result) {
-          // Een HTML-antwoord in plaats van JSON: dan praat de pagina met een
-          // webserver die de app niet draait (statische hosting, verkeerde
-          // documentroot, proxy-fout). Dat is een andere fout dan een fout in
-          // het formulier en moet dus anders klinken.
+        let message = apiMessage(result, '');
+        if (!message && !result) {
           message = `De server gaf geen geldig antwoord (fout ${response.status}). Draait de app wel op deze hosting?`;
-        } else {
+        } else if (!message) {
           message = `Account aanmaken is niet gelukt (fout ${response.status}).`;
         }
         throw new Error(message);

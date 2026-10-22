@@ -65,6 +65,8 @@ class Settings:
     session_max_age: int = 43_200
     max_upload_bytes: int = 10 * 1024 * 1024
     mollie_api_key: str = ""
+    kvk_api_key: str = ""
+    kvk_base_url: str = ""
 
     @property
     def production(self) -> bool:
@@ -109,6 +111,8 @@ class Settings:
             session_max_age=session_max_age,
             max_upload_bytes=max_upload,
             mollie_api_key=os.getenv("KASFLOW_MOLLIE_API_KEY", "").strip(),
+            kvk_api_key=os.getenv("KASFLOW_KVK_API_KEY", "").strip(),
+            kvk_base_url=os.getenv("KASFLOW_KVK_BASE_URL", "").strip().rstrip("/"),
         )
 
     def validate(self) -> None:
