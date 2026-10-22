@@ -399,7 +399,7 @@
       if (!response.ok) {
         let message = apiMessage(result, '');
         if (!message && !result) {
-          message = `De server gaf geen geldig antwoord (fout ${response.status}). Draait de app wel op deze hosting?`;
+          message = `De pagina laadt, maar /api geeft fout ${response.status}. Open /api/health: daar moet JSON staan. Ontbreekt die, dan draait Kasflow niet (sudo systemctl start kasflow) of ontbreekt de reverse-proxy in Plesk.`;
         } else if (!message) {
           message = `Account aanmaken is niet gelukt (fout ${response.status}).`;
         }

@@ -121,7 +121,14 @@ nog niet is ingesteld; de app start wél.
 3. Zet bij **Aanvullende directives voor HTTP** niets dat `location /` overschrijft.
 4. Opslaan. Plesk herlaadt nginx.
 
-Open `https://app.jouwdomein.nl/api/health` in de browser.
+Open `https://app.jouwdomein.nl/api/health` in de browser. Verwacht JSON
+(`"status":"ok"`). Een HTML-404 betekent dat nginx `/api` niet doorstuurt:
+controleer of het blok hierboven écht in de aanvullende directives staat en
+of proxymodus uit staat.
+
+Zonder dat nginx-blok vangt `.htaccess` + `proxy.php` `/api` op Apache en
+LiteSpeed, mits gunicorn op `127.0.0.1:8010` luistert. Op nginx-only doet
+`.htaccess` niets.
 
 ## 4. Methode B — Passenger (als systemd niet mag)
 

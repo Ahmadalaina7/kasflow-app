@@ -4,7 +4,7 @@
  * are never stored, so one account's data can never be served to another
  * account on a shared device. Navigations fall back to offline.html.
  */
-const VERSION = 'kasflow-v12';
+const VERSION = 'kasflow-v13';
 const SHELL = [
   'offline.html',
   'fonts.css',

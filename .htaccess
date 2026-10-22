@@ -1,0 +1,28 @@
+# Apache / LiteSpeed: stuur /api naar Kasflow (gunicorn op 127.0.0.1:8010).
+# Zonder deze regel geeft registreren "fout 404" terwijl de HTML wél laadt.
+# Nginx-only (Plesk proxymodus uit): plak plesk/nginx-additional.conf; dit
+# bestand wordt daar genegeerd.
+
+RewriteEngine On
+RewriteRule ^\.well-known/ - [L]
+RewriteRule ^api(/.*)?$ proxy.php [L,QSA]
+
+<Files ".env">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</Files>
+<FilesMatch "\.(py|pyc|sqlite3)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+RedirectMatch 404 /\.git
