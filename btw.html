@@ -53,11 +53,10 @@
     </div>
 
     <div class="alert">
-      <div><strong>Dit is je kwartaalaangifte omzetbelasting.</strong> Neem de hele euro's hieronder over in
-      Mijn Belastingdienst Zakelijk. De bedragen komen uit je facturen (factuurdatum) en je bonnetjes, inclusief
-      btw die naar jou is verlegd (Google, EU-leveranciers, rubriek 2a/4). Privégebruik en een suppletie vullen
-      je zelf in als die voorkomen. Kasflow dient niet zelf in: met <em>Kopieer bedragen</em> zet je ze in het
-      formulier van de Belastingdienst en met <em>Print / pdf</em> bewaar je het overzicht bij je administratie.</div>
+      <div><strong>Dit is je btw-aangifte van dit kwartaal.</strong> Kasflow telt je facturen en bonnen bij elkaar op en
+      rekent uit wat je moet betalen of terugkrijgt. Neem de bedragen over in <em>Mijn Belastingdienst Zakelijk</em> —
+      met <em>Kopieer bedragen</em> staan ze al klaar. Daarna vink je het kwartaal hieronder af. Kasflow dient zelf
+      niets in en stuurt niets naar de Belastingdienst.</div>
     </div>
 
     <div id="print-head">
@@ -66,10 +65,6 @@
     </div>
 
     <p id="vat-feedback" class="form-note" role="status" aria-live="polite"></p>
-    <section class="panel" id="check-panel" hidden>
-      <div class="panel-head"><h2>Controle voor je aangifte</h2></div>
-      <div class="toggle-list" id="check-list"></div>
-    </section>
 
     <div class="metric-grid">
       <div class="metric-card accent">
@@ -78,7 +73,7 @@
         <div class="metric-meta" id="vat-due-meta">—</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Verschuldigd − voorbelasting</div>
+        <div class="metric-label">Btw op je omzet − btw op je bonnen</div>
         <div class="metric-value" id="vat-split">—</div>
         <div class="metric-meta" id="vat-split-meta">—</div>
       </div>
@@ -100,7 +95,7 @@
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>Rubriek</th><th>Omschrijving</th><th style="text-align:right">Grondslag</th><th style="text-align:right">Btw</th></tr>
+            <tr><th>Rubriek</th><th>Omschrijving</th><th>Wat hoort hier?</th><th style="text-align:right">Grondslag</th><th style="text-align:right">Btw</th></tr>
           </thead>
           <tbody id="rubric-body"></tbody>
         </table>
@@ -108,6 +103,42 @@
       <p class="vat-disclaimer" id="vat-extra"></p>
       <p class="vat-disclaimer">Deadline voor deze periode: <strong id="rate-deadline">—</strong>.
       In de aangifte vul je hele euro's in (verschuldigde btw naar beneden, voorbelasting naar boven).</p>
+      <p class="vat-disclaimer">Privégebruik van zakelijke spullen (rubriek 1d), een suppletie of een correctie uit een
+      eerder kwartaal staan hier niet bij; die vul je zelf in bij de Belastingdienst.</p>
+    </section>
+
+    <section class="panel" id="source-panel">
+      <div class="panel-head">
+        <h2>Waar komen deze cijfers vandaan?</h2>
+        <span class="pill muted" id="source-period">—</span>
+      </div>
+      <p class="vat-disclaimer" id="source-summary">—</p>
+      <h3 class="vat-subhead">Facturen in dit kwartaal <span id="source-invoice-count"></span></h3>
+      <div class="table-wrap" id="source-invoices-table">
+        <table class="data-table">
+          <thead>
+            <tr><th>Nummer</th><th>Datum</th><th>Klant</th><th>Btw-behandeling</th><th style="text-align:right">Excl. btw</th><th style="text-align:right">Btw</th></tr>
+          </thead>
+          <tbody id="source-invoices"></tbody>
+        </table>
+      </div>
+      <p class="vat-disclaimer" id="source-invoices-empty">Nog geen facturen in dit kwartaal. <a class="table-link" href="factuur.html?extern=1">Factuur toevoegen</a> — ook als je hem al verstuurd hebt.</p>
+      <h3 class="vat-subhead">Bonnen in dit kwartaal <span id="source-receipt-count"></span></h3>
+      <div class="table-wrap" id="source-receipts-table">
+        <table class="data-table">
+          <thead>
+            <tr><th>Leverancier</th><th>Datum</th><th>Categorie</th><th style="text-align:right">Btw</th><th style="text-align:right">Aftrekbaar</th></tr>
+          </thead>
+          <tbody id="source-receipts"></tbody>
+        </table>
+      </div>
+      <p class="vat-disclaimer" id="source-receipts-empty">Nog geen bonnen in dit kwartaal. Zonder bonnen mis je de btw die je mag aftrekken. <a class="table-link" href="bonnetjes.html">Bon toevoegen</a>.</p>
+    </section>
+
+    <section class="panel" id="check-panel" hidden>
+      <div class="panel-head"><h2>Controle voor je aangifte</h2></div>
+      <p class="vat-disclaimer">Deze punten zijn geen verplichting, maar voorkomen dat je btw misloopt.</p>
+      <div class="toggle-list" id="check-list"></div>
     </section>
 
     <section class="panel" id="icp-panel" hidden>
@@ -139,6 +170,9 @@
           <tbody id="vat-table-body"></tbody>
         </table>
       </div>
+      <p class="vat-disclaimer"><strong>Open</strong> betekent: het kwartaal is voorbij en je kunt de aangifte invullen en
+      afvinken. <strong>Loopt nog</strong> betekent dat het kwartaal nog niet klaar is. <strong>Afgevinkt</strong> betekent
+      dat je de aangifte hebt gedaan; die cijfers zijn vergrendeld.</p>
     </section>
   </main>
 </div>
@@ -155,6 +189,30 @@
   let overview = null;
   let selected = 0;
   let companyName = 'Kasflow';
+  let detail = { invoices: [], receipts: [], customers: new Map() };
+
+  // Eén regel uitleg per rubriek, in gewone taal.
+  const RUBRIC_HELP = {
+    '1a': 'Je omzet met 21% btw, zonder de btw.',
+    '1b': 'Je omzet met 9% btw, bijvoorbeeld eten, boeken of reparaties.',
+    '1c': 'Omzet met een ander tarief dan 21% of 9%. Meestal leeg.',
+    '1e': 'Omzet met 0% btw of waarbij de klant de btw zelf aangeeft (btw verlegd).',
+    '2a': 'Inkopen in Nederland waarvan jij de btw aangeeft, zoals onderaanneming.',
+    '3a': 'Goederen of diensten aan klanten buiten de EU.',
+    '3b': 'Diensten of goederen aan klanten in een ander EU-land. Ook opgaaf ICP.',
+    '4a': 'Inkopen van buiten de EU waarvan jij de btw aangeeft.',
+    '4b': 'Inkopen uit een ander EU-land waarvan jij de btw aangeeft.',
+    '5a': 'Alles bij elkaar: de btw die je moet afdragen.',
+    '5b': 'De btw op je bonnen die je mag aftrekken.',
+    '5c': 'Wat je betaalt of terugkrijgt: 5a min 5b.'
+  };
+  const TREATMENT_LABELS = {
+    standard: 'Normaal',
+    reverse_charge: 'Btw verlegd',
+    intra_eu: 'EU-klant',
+    export: 'Uitvoer buiten de EU',
+    kor: 'KOR'
+  };
   const copyButton = document.getElementById('copy-button');
   const printButton = document.getElementById('print-button');
   const csvButton = document.getElementById('csv-button');
@@ -169,9 +227,74 @@
     return cents < 0 ? money(-cents) + ' terug' : money(cents);
   }
 
+  function invoicesIn(quarter) {
+    return detail.invoices
+      .filter(invoice => invoice.invoice_date >= quarter.start_date && invoice.invoice_date <= quarter.end_date)
+      .sort((a, b) => (a.invoice_date < b.invoice_date ? 1 : -1));
+  }
+
+  function receiptsIn(quarter) {
+    return detail.receipts
+      .filter(receipt => receipt.receipt_date >= quarter.start_date && receipt.receipt_date <= quarter.end_date)
+      .sort((a, b) => (a.receipt_date < b.receipt_date ? 1 : -1));
+  }
+
+  function countLabel(count, singular, plural) {
+    return count + ' ' + (count === 1 ? singular : plural);
+  }
+
+  function renderSources(quarter, invoices, receipts) {
+    document.getElementById('source-period').textContent = quarter.label;
+    const credits = invoices.filter(invoice => invoice.kind === 'credit');
+    const parts = [
+      invoices.length ? countLabel(invoices.length, 'factuur', 'facturen') : 'Nog geen facturen',
+      receipts.length ? countLabel(receipts.length, 'bon', 'bonnen') : 'geen bonnen'
+    ];
+    let summary = parts.join(' · ') + ' in ' + quarter.label + '.';
+    if (credits.length) {
+      summary += ' Daarvan ' + countLabel(credits.length, 'creditfactuur', 'creditfacturen') + ', die de btw verlagen.';
+    }
+    if (invoices.length && !receipts.length) {
+      summary += ' Let op: zonder bonnen is de voorbelasting € 0, dus betaal je nu meer btw dan nodig.';
+    }
+    document.getElementById('source-summary').textContent = summary;
+
+    document.getElementById('source-invoice-count').textContent =
+      invoices.length ? '(' + countLabel(invoices.length, 'factuur', 'facturen') + ')' : '';
+    document.getElementById('source-invoices-empty').hidden = invoices.length > 0;
+    document.getElementById('source-invoices-table').hidden = invoices.length === 0;
+    document.getElementById('source-invoices').innerHTML = invoices.map(invoice =>
+      '<tr>' +
+      '<td data-label="Nummer" class="row-name">' + escapeHtml(invoice.number) +
+        (invoice.kind === 'credit' ? ' <span class="badge credited">credit</span>' : '') + '</td>' +
+      '<td data-label="Datum">' + formatShortDate(invoice.invoice_date) + '</td>' +
+      '<td data-label="Klant">' + escapeHtml(detail.customers.get(invoice.customer_id) || '—') + '</td>' +
+      '<td data-label="Btw-behandeling">' + escapeHtml(TREATMENT_LABELS[invoice.vat_treatment] || invoice.vat_treatment) + '</td>' +
+      '<td data-label="Excl. btw" class="amount" style="text-align:right">' + money(invoice.subtotal_cents) + '</td>' +
+      '<td data-label="Btw" class="amount" style="text-align:right">' + money(invoice.vat_cents) + '</td>' +
+      '</tr>'
+    ).join('');
+
+    document.getElementById('source-receipt-count').textContent =
+      receipts.length ? '(' + countLabel(receipts.length, 'bon', 'bonnen') + ')' : '';
+    document.getElementById('source-receipts-empty').hidden = receipts.length > 0;
+    document.getElementById('source-receipts-table').hidden = receipts.length === 0;
+    document.getElementById('source-receipts').innerHTML = receipts.map(receipt =>
+      '<tr>' +
+      '<td data-label="Leverancier" class="row-name">' + escapeHtml(receipt.vendor) + '</td>' +
+      '<td data-label="Datum">' + formatShortDate(receipt.receipt_date) + '</td>' +
+      '<td data-label="Categorie">' + escapeHtml(receipt.category_label || receipt.category) + '</td>' +
+      '<td data-label="Btw" class="amount" style="text-align:right">' + money(receipt.vat_cents) + '</td>' +
+      '<td data-label="Aftrekbaar" class="amount" style="text-align:right">' + money(receipt.deductible_vat_cents) + '</td>' +
+      '</tr>'
+    ).join('');
+  }
+
   function render() {
     const quarter = overview.quarters[selected];
     const refund = (quarter.form_total_euros || 0) < 0;
+    const invoices = invoicesIn(quarter);
+    const receipts = receiptsIn(quarter);
 
     document.getElementById('vat-due-label').textContent = quarter.kor
       ? 'Kleineondernemersregeling'
@@ -180,9 +303,11 @@
     document.getElementById('vat-due').textContent = quarter.kor ? '€ 0' : euro(Math.abs(quarter.form_total_euros || 0));
     document.getElementById('vat-due-meta').textContent = quarter.kor
       ? 'Je hoeft onder de KOR geen aangifte te doen'
-      : quarter.invoice_count + (quarter.invoice_count === 1 ? ' factuur' : ' facturen') + ' en ' +
-        quarter.receipt_count + (quarter.receipt_count === 1 ? ' bon' : ' bonnen') +
-        ' · over te nemen in hele euro’s';
+      : (invoices.length || receipts.length
+        ? countLabel(invoices.length, 'factuur', 'facturen') + ' en ' +
+          countLabel(receipts.length, 'bon', 'bonnen') +
+          ' · over te nemen in hele euro’s'
+        : 'Nog geen facturen of bonnen in dit kwartaal');
     document.getElementById('vat-split').textContent =
       money((quarter.vat_cents || 0) + (quarter.reverse_charge_vat_cents || 0)) +
       ' − ' + money(quarter.input_vat_cents);
@@ -217,6 +342,7 @@
       return '<tr' + (isTotal ? ' class="row-selected"' : '') + '>' +
         '<td data-label="Rubriek" class="row-name">' + escapeHtml(line.code) + '</td>' +
         '<td data-label="Omschrijving">' + (isTotal ? '<strong>' + escapeHtml(line.label) + '</strong>' : escapeHtml(line.label)) + '</td>' +
+        '<td data-label="Wat hoort hier?"><span class="vat-help">' + escapeHtml(RUBRIC_HELP[line.code] || '') + '</span></td>' +
         '<td data-label="Grondslag" class="amount" style="text-align:right">' +
           (line.base_euros == null ? '' : euro(line.base_euros)) + '</td>' +
         '<td data-label="Btw" class="amount" style="text-align:right">' +
@@ -277,6 +403,8 @@
         ? euro(-quarter.form_total_euros) + ' terug'
         : euro(quarter.form_total_euros) + ' te betalen') +
         ' (deadline ' + formatShortDate(quarter.deadline) + ').';
+
+    renderSources(quarter, invoices, receipts);
   }
 
   function euro(value) {
@@ -390,7 +518,18 @@
 
   async function loadVat() {
     try {
-      overview = await api('/api/vat');
+      const [vat, invoices, receipts, customers] = await Promise.all([
+        api('/api/vat'),
+        api('/api/invoices'),
+        api('/api/receipts'),
+        api('/api/customers')
+      ]);
+      overview = vat;
+      detail = {
+        invoices: invoices || [],
+        receipts: receipts || [],
+        customers: new Map((customers || []).map(customer => [customer.id, customer.name]))
+      };
       selected = defaultSelection(overview.quarters);
       render();
     } catch (error) {
@@ -427,7 +566,13 @@
         });
         note(feedback, quarter.label + ' is afgevinkt. Facturen en bonnen in dit kwartaal zijn nu vergrendeld.', 'success');
       }
-      overview = await api('/api/vat');
+      const [vat, invoices, receipts] = await Promise.all([
+        api('/api/vat'),
+        api('/api/invoices'),
+        api('/api/receipts')
+      ]);
+      overview = vat;
+      detail = { ...detail, invoices: invoices || [], receipts: receipts || [] };
     } catch (error) {
       note(feedback, error.message, 'error');
     } finally {

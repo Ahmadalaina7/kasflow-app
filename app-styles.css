@@ -510,6 +510,9 @@ dialog.modal::backdrop{ background:rgba(10,24,48,0.55); backdrop-filter:blur(3px
 .rate-row .rate-name{ color:var(--ink-500); }
 .rate-row .rate-value{ font-family:var(--numeric); font-weight:600; color:var(--navy-900); }
 .vat-disclaimer{ font-size:0.82rem; color:var(--ink-500); line-height:1.65; margin-top:16px; }
+.vat-subhead{ font-size:0.95rem; font-weight:700; color:var(--ink-700); margin:24px 0 8px; }
+.vat-subhead span{ font-weight:500; color:var(--ink-500); }
+.vat-help{ font-size:0.8rem; color:var(--ink-500); line-height:1.5; }
 .status-ok{ color:var(--emerald-600); font-weight:600; }
 .status-concept{ color:#8A6A24; font-weight:600; }
 

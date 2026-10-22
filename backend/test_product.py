@@ -663,6 +663,54 @@ def test_foreign_purchases_fill_vat_rubrics_2a_4a_4b_and_icp(tmp_path):
     assert current["icp"][0]["net_cents"] == 10000
 
 
+def test_vat_return_rounds_in_the_filers_favour(tmp_path):
+    """Af te dragen btw naar beneden, voorbelasting naar boven, in hele euro's."""
+    client = client_for(tmp_path)
+    register(client)
+    customer = create_customer(client)
+    today = date.today()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": customer["id"],
+            "number": "2026-300",
+            "invoice_date": today.isoformat(),
+            "due_date": today.isoformat(),
+            "lines": [
+                {"description": "Werk", "quantity": "1", "unit_price": "100.05", "vat_rate": "0.21"}
+            ],
+        },
+    )
+    assert invoice.status_code == 201, invoice.text
+    # 21% van 100,05 is 21,0105 -> 2.101 cent.
+    assert invoice.json()["vat_cents"] == 2101
+    receipt = client.post(
+        "/api/receipts",
+        data={
+            "vendor": "Winkel",
+            "receipt_date": today.isoformat(),
+            "amount": "12.10",
+            "vat_amount": "2.10",
+            "vat_origin": "nl",
+            "category": "kantoor",
+        },
+        files={"file": ("bon.png", b"\x89PNG\r\n", "image/png")},
+    )
+    assert receipt.status_code == 201, receipt.text
+
+    current = client.get("/api/vat").json()["current"]
+    form = {line["code"]: line for line in current["form"]}
+    assert form["1a"]["base_euros"] == 100
+    assert form["1a"]["vat_euros"] == 21
+    assert form["5a"]["vat_euros"] == 21
+    assert form["5b"]["vat_euros"] == 3
+    assert form["5c"]["vat_euros"] == 18
+    assert current["form_total_euros"] == 18
+    # De ongeafgeronde bedragen blijven beschikbaar voor de controle eronder.
+    assert current["vat_cents"] == 2101
+    assert current["input_vat_cents"] == 210
+
+
 def test_bank_statement_matches_an_invoice_and_can_be_classified(tmp_path):
     client = client_for(tmp_path)
     register(client)
