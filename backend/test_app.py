@@ -3,7 +3,7 @@ import json
 import re
 import sqlite3
 import zipfile
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -504,6 +504,19 @@ def test_legacy_database_is_migrated_without_losing_data(tmp_path):
         for row in connection.execute("PRAGMA index_info('sqlite_autoindex_invoices_1')")
     ]
     assert index_columns == ["owner_id", "number"]
+
+    # De upgrade naar abonnementen mag een bestaand bedrijf niet op slot zetten:
+    # elk bedrijf dat de migratie tegenkomt, begint met een volle proefperiode.
+    trials = connection.execute(
+        "SELECT status, trial_ends_at FROM subscriptions ORDER BY company_id"
+    ).fetchall()
+    assert len(trials) == 2
+    assert {status for status, _ in trials} == {"trialing"}
+    expected = datetime.now(timezone.utc) + timedelta(days=14)
+    for _, ends_at in trials:
+        moment = datetime.fromisoformat(str(ends_at))
+        moment = moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+        assert abs((moment - expected).total_seconds()) < 300
     connection.close()
 
 

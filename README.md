@@ -120,6 +120,9 @@ Zie [.env.example](.env.example) voor alle variabelen. De belangrijkste:
 | `KASFLOW_MOLLIE_API_KEY` | Mollie-sleutel (`test_…` of `live_…`) voor iDEAL en de maandelijkse incasso. |
 | `KASFLOW_ALLOWED_HOSTS` | Komma-gescheiden hostnamen die de app mogen aanroepen. |
 | `KASFLOW_MAX_UPLOAD_MB` | Maximale uploadgrootte voor bonnetjes (standaard 10). |
+| `ARCHIL_API_KEY` | Optioneel: API-sleutel (begint met `key-`, geen disk- of mounttoken) voor bestanden op een Archil-disk. |
+| `ARCHIL_REGION` | Regio waarin die sleutel is aangemaakt (standaard `aws-us-east-1`). |
+| `ARCHIL_DISK_ID` | Disk (`dsk-…`) die `backend/archil_storage.py` gebruikt; leeg tot je er een hebt. |
 
 In productie weigert de app te starten zonder sleutel, met een `http://`-URL of
 met SQLite: dat zijn de fouten die anders stil tot datalekken leiden.
@@ -173,6 +176,8 @@ backend/invoice_pdf.py     factuur-PDF volgens de eisen van de Belastingdienst
 backend/mailer.py          SMTP-verzending en Nederlandse mailtemplates
 backend/test_app.py        basistests
 backend/test_product.py    tests voor PDF, e-mail, verificatie, AVG, beveiliging
+backend/archil_storage.py  bestanden op een Archil-disk: exec, schrijven en lezen
+backend/check_archil.py    controle: schrijven in de ene exec, teruglezen in de andere
 HANDOFF_PLAN.md            architectuur en ontwerpkeuzes
 ```
 
@@ -211,7 +216,8 @@ een nieuwe lettertypefamilie toe te voegen.
   zou de PDF groter maken en vraagt een TTF-variant van het font.
 - **Rate limiting** is per proces. Draai je meerdere workers, zet dan een
   gedeelde teller zoals Redis voor de inlog- en verzendroutes.
-- **Abo's en betalingen** zijn nog niet gebouwd: er is geen abonnementslaag of
-  betaalprovider.
+- **Abonnementen**: de drie plannen ontgrendelen dezelfde functies; er is nog
+  geen verschil in functionaliteit per plan, geen abonnementsfactuur (PDF) en
+  geen herinneringsmail bij een mislukte incasso.
 - **Juridische teksten** zijn concepten; laat ze toetsen en vul de
   bedrijfsgegevens in voordat je publiceert.

@@ -10,7 +10,10 @@ python-dotenv>=1.0,<2
 a2wsgi>=1.10,<2
 pypdf>=5,<6
 pillow>=10,<12
+# Runtime: de Mollie-client en de webhook praten over HTTP (backend/billing.py).
+httpx>=0.27,<1
+# Runtime: bestanden op een Archil-disk (backend/archil_storage.py).
+archil==0.17.0
 
 # Development and testing
 pytest>=8,<9
-httpx>=0.27,<1

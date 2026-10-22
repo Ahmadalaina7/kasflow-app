@@ -1141,3 +1141,38 @@ def test_cancelling_keeps_access_until_the_period_ends(tmp_path):
     assert billing["can_write"] is True
     assert billing["days_left"] >= 0
 
+
+def test_trial_migration_survives_two_workers_starting_together(tmp_path):
+    """Twee workers die samen starten mogen de migratie niet laten stuklopen.
+
+    Beide kunnen de ``NOT EXISTS``-controle passeren en daarna botsen op de
+    unieke index van ``subscriptions.company_id``. De verliezer moet alleen zijn
+    eigen rij terugdraaien, want op PostgreSQL maakt één mislukte statement de
+    hele transactie onbruikbaar.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import create_engine, text
+    from migrations import ensure_trials, grant_trial
+
+    client = client_for(tmp_path)
+    register(client)
+    database = tmp_path / "product.sqlite3"
+    engine = create_engine(f"sqlite:///{database.as_posix()}")
+    now = datetime.now(timezone.utc)
+
+    with engine.begin() as connection:
+        company_id = connection.execute(text("SELECT id FROM companies")).scalar()
+        # Beide aanroepen botsen met de rij die het registreren al aanmaakte.
+        assert grant_trial(connection, company_id=company_id, created_at=now, now=now) is False
+        assert grant_trial(connection, company_id=company_id, created_at=now, now=now) is False
+        # De buitenste transactie leeft nog: dit is wat er op PostgreSQL misging.
+        count = connection.execute(
+            text("SELECT COUNT(*) FROM subscriptions WHERE company_id = :company"),
+            {"company": company_id},
+        ).scalar()
+        assert count == 1
+
+    # En een tweede volledige migratieronde is gewoon idempotent.
+    ensure_trials(engine)
+

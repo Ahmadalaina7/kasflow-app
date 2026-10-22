@@ -14,9 +14,11 @@ metadata stays the single source of truth here.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Boolean, MetaData, inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger("kasflow.migrations")
 
@@ -302,6 +304,51 @@ def ensure_tenancy(engine: Engine) -> None:
             )
 
 
+def _as_datetime(value: object, fallback: datetime) -> datetime:
+    """Read a stored timestamp from SQLite (text) or PostgreSQL (datetime)."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return fallback
+    else:
+        return fallback
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def grant_trial(connection, *, company_id: int, created_at: object, now: datetime) -> bool:
+    """Insert one trial row. Returns False when the company already had one.
+
+    Two workers that boot at the same moment can both pass the ``NOT EXISTS``
+    check and then compete for the unique index on ``subscriptions.company_id``.
+    The insert therefore runs in a savepoint: the loser rolls back only its own
+    row instead of aborting the whole migration (on PostgreSQL a failed
+    statement poisons the transaction until it is rolled back).
+    """
+    from billing import TRIAL_DAYS
+
+    start = _as_datetime(created_at, now)
+    # Bestaande bedrijven krijgen een volle proefperiode vanaf nu; ze mogen
+    # niet op de dag van de upgrade op slot gaan.
+    trial_end = max(start, now) + timedelta(days=TRIAL_DAYS)
+    try:
+        with connection.begin_nested():
+            connection.execute(
+                text(
+                    "INSERT INTO subscriptions "
+                    "(company_id, plan, status, trial_ends_at, created_at, updated_at) "
+                    "VALUES (:company_id, 'starter', 'trialing', :trial_end, :now, :now)"
+                ),
+                {"company_id": company_id, "trial_end": trial_end, "now": now},
+            )
+    except IntegrityError:
+        logger.info("Bedrijf %s had al een abonnement; proefperiode overgeslagen", company_id)
+        return False
+    return True
+
+
 def ensure_trials(engine: Engine) -> None:
     """Give every existing company a proefperiode that starts at its creation.
 
@@ -309,13 +356,12 @@ def ensure_trials(engine: Engine) -> None:
     the first deploy; their trial starts when the company was created, which is
     the same rule new accounts get.
     """
-    from datetime import datetime, timedelta, timezone
-
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
     if "subscriptions" not in tables or "companies" not in tables:
         return
     now = datetime.now(timezone.utc)
+    granted = 0
     with engine.begin() as connection:
         rows = connection.execute(
             text(
@@ -325,33 +371,11 @@ def ensure_trials(engine: Engine) -> None:
                 """
             )
         ).fetchall()
-        def as_datetime(value) -> datetime:
-            if isinstance(value, datetime):
-                parsed = value
-            elif isinstance(value, str):
-                try:
-                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                except ValueError:
-                    return now
-            else:
-                return now
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
         for company_id, created_at in rows:
-            start = as_datetime(created_at)
-            # Bestaande bedrijven krijgen een volle proefperiode vanaf nu; ze
-            # mogen niet op de dag van de upgrade op slot gaan.
-            trial_end = max(start, now) + timedelta(days=14)
-            connection.execute(
-                text(
-                    "INSERT INTO subscriptions "
-                    "(company_id, plan, status, trial_ends_at, created_at, updated_at) "
-                    "VALUES (:company_id, 'starter', 'trialing', :trial_end, :now, :now)"
-                ),
-                {"company_id": company_id, "trial_end": trial_end, "now": now},
-            )
-        if rows:
-            logger.info("Proefperiode gestart voor %s bestaande bedrijven", len(rows))
+            if grant_trial(connection, company_id=company_id, created_at=created_at, now=now):
+                granted += 1
+    if granted:
+        logger.info("Proefperiode gestart voor %s bestaande bedrijven", granted)
 
 
 def run_migrations(engine: Engine, metadata: MetaData) -> None:

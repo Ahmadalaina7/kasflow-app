@@ -191,8 +191,9 @@ tijdelijke SQLite-database en een opname-mailer in plaats van echte SMTP.
   mikt op 1 juli 2030, ViDA op grensoverschrijdende rapportage). Factuurgegevens
   staan klaar om later UBL/Peppol te leveren.
 - **OCR**: bonnetjes worden bewaard, niet automatisch uitgelezen.
-- **Abonnementen**: geen abonnementslaag of betaalprovider; dat is de logische
-  volgende commerciële stap (Mollie of Stripe met iDEAL).
+- **Abonnementen**: de drie plannen (€ 19 / € 39 / € 79) ontgrendelen
+  dezelfde functies. Nog niet gebouwd: een abonnementsfactuur als PDF,
+  herinneringsmails bij een mislukte incasso en functieverschil per plan.
 - **Meerdere workers**: zet dan een gedeelde teller (Redis) voor rate limiting en
   overweeg objectopslag voor bonnetjes.
 - **Juridische teksten** in `privacy.html`, `voorwaarden.html` en

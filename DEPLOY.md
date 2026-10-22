@@ -60,11 +60,31 @@ chmod 600 .env
 ```
 
 Vul in `.env`: `KASFLOW_SECRET_KEY`, `KASFLOW_PUBLIC_URL`, `KASFLOW_DOMAIN`,
-`KASFLOW_ALLOWED_HOSTS`, `POSTGRES_PASSWORD` en de `KASFLOW_SMTP_*`-waarden.
+`KASFLOW_ALLOWED_HOSTS`, `POSTGRES_PASSWORD`, de `KASFLOW_SMTP_*`-waarden en
+(eventueel) `KASFLOW_MOLLIE_API_KEY`.
 
 De app controleert de configuratie bij het starten: zonder sleutel van minimaal
 32 tekens, met een `http://`-URL of met SQLite stopt hij met een duidelijke
 foutmelding.
+
+### Betalingen (Mollie)
+
+`KASFLOW_MOLLIE_API_KEY` mag leeg blijven: de app start dan gewoon en de
+proefperiode van 14 dagen loopt door, maar er kan niemand een abonnement
+afsluiten. Met een sleutel int Mollie maandelijks via SEPA Direct Debit, na een
+iDEAL-betaling die de klant zelf goedkeurt.
+
+- Mollie roept `https://<KASFLOW_DOMAIN>/api/billing/webhook` aan. Dat adres
+  komt van `KASFLOW_PUBLIC_URL`, dus die moet kloppen en publiek bereikbaar
+  zijn; Caddy regelt het certificaat. Een webhook naar `localhost` komt nooit
+  aan.
+- Zet **SEPA Direct Debit** aan in je Mollie-profiel, anders weigert Mollie het
+  mandaat voor de volgende maanden.
+- Werk eerst met een `test_`-sleutel en test één betaling in testmodus. Zet
+  daarna `live_` in `.env` en `docker compose up -d`.
+
+Het abonnement staat in de tabel `subscriptions` en zit daarmee in de
+databasedump uit §5; een extra back-upstap is niet nodig.
 
 ## 3. Starten
 

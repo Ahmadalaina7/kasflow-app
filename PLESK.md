@@ -57,9 +57,33 @@ Vul minstens:
 | `KASFLOW_DATABASE_URL` | `postgresql+psycopg://GEBRUIKER:WACHTWOORD@localhost:5432/DATABASENAAM` |
 | `KASFLOW_UPLOAD_DIR` | het absolute pad naar `kasflow/backend/uploads` |
 | `KASFLOW_SMTP_*` | je mailbox (Cloud86 of de Plesk-mailserver) |
+| `KASFLOW_MOLLIE_API_KEY` | Mollie-sleutel voor iDEAL en de maandelijkse incasso (mag leeg blijven) |
 
 In het wachtwoord van de database moet je `@ : / # %` URL-encoden
 (`@` wordt `%40`).
+
+### Betalingen (Mollie)
+
+Zonder `KASFLOW_MOLLIE_API_KEY` start Kasflow gewoon, maar kan niemand een
+abonnement afsluiten: de proefperiode van 14 dagen loopt door en Instellingen
+zegt wat er ontbreekt. Met een sleutel int Mollie per maand via SEPA Direct
+Debit, op basis van een iDEAL-betaling die de klant zelf goedkeurt.
+
+Wat op de server goed moet staan:
+
+1. Mollie stuurt de webhook naar `KASFLOW_PUBLIC_URL/api/billing/webhook`,
+   dus `KASFLOW_PUBLIC_URL` moet het echte `https://`-adres zijn en van buiten
+   bereikbaar (geen `localhost`, geen IP met een self-signed certificaat).
+2. De webhook is een POST zonder `Origin`-header: nginx hoeft hier niets voor
+   open te zetten, het bestaande `location /` blok is genoeg.
+3. Zet in je Mollie-profiel **SEPA Direct Debit** aan, anders weigert Mollie het
+   mandaat voor de volgende maanden.
+4. Begin met een `test_`-sleutel, doe één betaling in testmodus, en zet daarna
+   `live_` in `.env` met `sudo systemctl restart kasflow`.
+
+Het abonnement zelf staat in de tabel `subscriptions` en gaat mee in
+`plesk/backup.sh`. De webhook is het vangnet: de terugkeerpagina controleert de
+betaling ook, dus een gemiste melding blokkeert niemand permanent.
 
 ## 3. Methode A — nginx-proxy (aanbevolen)
 
@@ -159,6 +183,8 @@ Migraties draaien bij het starten en zijn additief.
 | 403 TrustedHost | `KASFLOW_ALLOWED_HOSTS` komt niet overeen met het domein |
 | 413 bij bon-upload | `client_max_body_size` in nginx te laag |
 | Facturen komen niet aan | SMTP niet gezet, of poort 587 geblokkeerd |
+| "Betalen is op deze server nog niet ingesteld" | `KASFLOW_MOLLIE_API_KEY` leeg; daarna service herstarten |
+| Betaling blijft op "wacht op betaling" | webhook onbereikbaar: `KASFLOW_PUBLIC_URL` moet publiek `https://` zijn |
 | 502 Bad Gateway | `kasflow.service` draait niet; `journalctl -u kasflow -e` |
 | Styling weg / oude pagina | service worker; hard refresh of `kasflow-v…` in `sw.js` |
 
