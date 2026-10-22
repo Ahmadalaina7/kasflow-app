@@ -1,20 +1,17 @@
-# LiteSpeed/Apache: /api via PHP. CGI-scripts zijn op deze hosting 403.
-# PHP start Python per verzoek (geen poort 8010, geen systemd).
+# LiteSpeed (Plesk): /api gaat naar proxy.php, dat Python start.
+# Zie PLESK.md. Alles daarbuiten wordt als bestand geserveerd.
 
 RewriteEngine On
 RewriteRule ^\.well-known/ - [L]
+
+# Servercode en gegevens nooit via de webserver bereikbaar.
+RewriteRule ^(backend|plesk)(/|$) - [F]
+RewriteRule ^\.git(/|$) - [F]
+RewriteRule ^(\.env(\..*)?|.*\.sqlite3)$ - [F]
+
 RewriteRule ^api(/.*)?$ proxy.php [L,QSA]
 
-<Files ".env">
-    <IfModule mod_authz_core.c>
-        Require all denied
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order allow,deny
-        Deny from all
-    </IfModule>
-</Files>
-<FilesMatch "\.(py|pyc|sqlite3)$">
+<FilesMatch "\.(py|pyc|sh|log|sqlite3)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -23,4 +20,3 @@ RewriteRule ^api(/.*)?$ proxy.php [L,QSA]
         Deny from all
     </IfModule>
 </FilesMatch>
-RedirectMatch 404 /\.git

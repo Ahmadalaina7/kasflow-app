@@ -168,7 +168,7 @@ verify.html / reset.html   e-mail bevestigen en wachtwoord resetten
 privacy.html / voorwaarden.html / verwerkersovereenkomst.html   juridische pagina's
 manifest.webmanifest       app-manifest voor installatie op een telefoon
 Dockerfile / docker-compose.yml / Caddyfile / DEPLOY.md / PLESK.md   productie
-passenger_wsgi.py / plesk/       Plesk (Passenger-fallback en systemd)
+proxy.php / plesk/            Plesk achter LiteSpeed: /api via PHP en Python
 backend/app.py             FastAPI-app: modellen, auth, facturen, btw, bonnen, AVG
 backend/config.py          omgevingsconfiguratie met productievalidatie
 backend/migrations.py      idempotente migraties voor SQLite en PostgreSQL
