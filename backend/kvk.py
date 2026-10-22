@@ -286,9 +286,9 @@ class KvkClient:
                 last = error
             except (KvkUnavailable, KvkBusy, KvkNotConfigured) as error:
                 last = error
-        self._misses.add(number)
         if isinstance(last, (KvkBusy, KvkUnavailable)):
             raise last
+        self._misses.add(number)
         raise KvkNotFound()
 
     def _zoeken_current(self, number: str) -> KvkCompany:
@@ -332,16 +332,26 @@ class KvkClient:
         return company_from_results(number, results)
 
     def _bedrijfsdata(self, number: str) -> KvkCompany:
-        try:
-            response = httpx.get(
-                BEDRIJFSDATA_URL,
-                params={"kvk": number},
-                headers=self._headers(),
-                timeout=self.timeout,
-            )
-        except httpx.HTTPError as error:
-            logger.warning("Bedrijfsdata lookup mislukt: %s", error)
-            raise KvkUnavailable() from error
+        # Hun TLS-certificaat is verlopen; OpenSSL op Plesk weigert verify=True,
+        # httpx/certifi soms niet. We proberen eerst streng, daarna de publieke JSON.
+        response = None
+        last_error: Exception | None = None
+        for verify in (True, False):
+            try:
+                response = httpx.get(
+                    BEDRIJFSDATA_URL,
+                    params={"kvk": number},
+                    headers=self._headers(),
+                    timeout=self.timeout,
+                    verify=verify,
+                )
+                last_error = None
+                break
+            except httpx.HTTPError as error:
+                last_error = error
+                logger.warning("Bedrijfsdata lookup mislukt (verify=%s): %s", verify, error)
+        if response is None:
+            raise KvkUnavailable() from last_error
         if response.status_code == 404:
             raise KvkNotFound()
         if response.status_code == 429:

@@ -186,7 +186,49 @@
     return fallback;
   }
 
+  function companyFromBedrijfsdata(number, payload) {
+    const rows = payload && Array.isArray(payload.kvk) ? payload.kvk : [];
+    const active = rows.filter(function (row) {
+      return row && row.active !== 0 && row.active !== '0' && row.active !== false;
+    });
+    if (rows.length && !active.length) {
+      throw new Error('Dit bedrijf is uitgeschreven bij KVK. Je kunt er geen account mee openen.');
+    }
+    if (!active.length) return null;
+    const preferred = active.find(function (row) {
+      return String(row.type || '').toLowerCase() === 'hoofdvestiging';
+    }) || active[0];
+    const names = [];
+    [preferred].concat(active).forEach(function (row) {
+      const naam = String(row.name || '').trim();
+      if (naam && names.indexOf(naam) === -1) names.push(naam);
+    });
+    return {
+      kvk_number: number,
+      name: names[0] || '',
+      city: String(preferred.city || ''),
+      street: '',
+      active: true,
+      verified: true
+    };
+  }
+
+  async function lookupKvkDirect(number) {
+    const response = await fetch('https://free.bedrijfsdata.nl/v1.1/kvk?kvk=' + encodeURIComponent(number), {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store'
+    });
+    if (!response.ok) return null;
+    return companyFromBedrijfsdata(number, await response.json());
+  }
+
   async function lookupKvk(number) {
+    try {
+      const direct = await lookupKvkDirect(number);
+      if (direct && direct.name) return direct;
+    } catch (error) {
+      if (error && /uitgeschreven/i.test(error.message)) throw error;
+    }
     const response = await fetch('/api/kvk/lookup?kvk_number=' + encodeURIComponent(number), {
       headers: { Accept: 'application/json' },
       cache: 'no-store'
