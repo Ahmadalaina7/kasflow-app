@@ -134,6 +134,24 @@ Open `https://app.jouwdomein.nl/api/health` in de browser.
 Passenger praat WSGI; `passenger_wsgi.py` in de projectroot vertaalt FastAPI.
 Uploads en lange requests zijn hier minder betrouwbaar dan bij methode A.
 
+### Staat er LiteSpeed in plaats van nginx?
+
+Sommige Plesk-abonnementen draaien LiteSpeed. Herken het aan de `Server:
+LiteSpeed`-regel in de antwoordheaders, en aan het ontbreken van **Aanvullende
+nginx-directives** bij Apache & nginx-instellingen. Dan werkt methode A niet.
+
+Controleer eerst of **Python** in het Plesk-menu bij het domein staat:
+
+- **Wel Python**: gebruik methode B (Passenger + `.htaccess`). Zet de
+documentroot op de projectroot, niet op `httpdocs`.
+- **Geen Python**: dit abonnement kan geen Python-proces draaien. Kies dan een
+  VPS met Docker ([DEPLOY.md](DEPLOY.md)) en laat het domein daarheen wijzen.
+
+Uploaden van alleen de HTML-bestanden is nooit genoeg: dan laadt de pagina wel,
+maar antwoordt `/api/health` met een 404-pagina van de webserver en mislukken
+inloggen en registreren. Test na elke deploy `https://jouwdomein.nl/api/health`:
+alleen `{"status":"ok"}` betekent dat de app echt draait.
+
 ## 5. E-mail
 
 Zelfde mailbox als in [DEPLOY.md](DEPLOY.md) §4. Zonder SMTP start Kasflow, maar
@@ -185,6 +203,8 @@ Migraties draaien bij het starten en zijn additief.
 | Facturen komen niet aan | SMTP niet gezet, of poort 587 geblokkeerd |
 | "Betalen is op deze server nog niet ingesteld" | `KASFLOW_MOLLIE_API_KEY` leeg; daarna service herstarten |
 | Betaling blijft op "wacht op betaling" | webhook onbereikbaar: `KASFLOW_PUBLIC_URL` moet publiek `https://` zijn |
+| Pagina's laden, maar `/api/health` geeft 404 | de webserver serveert alleen statische bestanden; de Python-app draait niet |
+| Registreren zegt "geen geldig antwoord (fout 404)" | zelfde oorzaak: geen Python-proces op deze hosting |
 | 502 Bad Gateway | `kasflow.service` draait niet; `journalctl -u kasflow -e` |
 | Styling weg / oude pagina | service worker; hard refresh of `kasflow-v…` in `sw.js` |
 
