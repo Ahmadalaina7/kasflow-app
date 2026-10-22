@@ -19,7 +19,11 @@ Python. Er is geen poort 8010, geen cron-taak en geen service die kan stoppen.
 2. Open `https://kasflow-app.webnestiq.nl/api/health` één keer.
 
 Het eerste verzoek kan **1–2 minuten** duren: dan maakt `plesk/bootstrap.sh`
-de venv en installeert het de packages. Daarna is het antwoord:
+de venv en installeert het de packages. Het script kiest zelf de **nieuwste
+Python** die de server heeft (3.10 of nieuwer; op 3.8/3.9 gebruikt het
+`backend/requirements-legacy.txt`) en maakt de venv opnieuw aan als die van een
+andere versie is. Alles wat het doet staat in `backend/logs/bootstrap.log`.
+Daarna is het antwoord:
 
 ```json
 {"status":"ok","version":"2.0.0","database":"ok","mail":"log","env":"production"}
@@ -72,8 +76,10 @@ verdere invulling.
 
 | Melding | Oorzaak en oplossing |
 | --- | --- |
-| `Python kon niet worden klaargezet …` | De venv of `pip install` lukte niet. De melding bevat de laatste regel uit `bootstrap.sh`; vaak blokkeert de host PyPI of ontbreekt Python 3. |
-| `De Python-packages ontbreken nog …` | `bootstrap.sh` stopte halverwege. Draai hem met de hand: `bash plesk/bootstrap.sh`. |
+| `Geen Python 3 gevonden …` | De hosting heeft helemaal geen Python. Vraag de host om Python 3.10+, of stap over op een VPS ([DEPLOY.md](DEPLOY.md)). |
+| `pip install is mislukt met Python …` | De melding noemt de laatste regel uit het pip-logboek. Meestal blokkeert de host PyPI, of is de Python te oud voor de nieuwste FastAPI. |
+| `De Python-packages ontbreken nog (Python 3.x.y) …` | De installatie stopte halverwege; `backend/logs/bootstrap.log` heeft de hele uitvoer. Draai `bash plesk/bootstrap.sh` met de hand en lees de laatste regels. |
+| `Na het installeren ontbreken nog: …` | Eén pakket is niet geïnstalleerd. Draai `bootstrap.sh` opnieuw; blijft het weg, dan weigert de host dat pakket. |
 | `Kasflow kon niet starten (…)` | De app zelf faalt bij het starten; de melding noemt de fout. Volledige traceback: `backend/logs/cgi.log`. |
 | `De app stopte zonder antwoord …` | Meestal een time-out van 120 s of een ontbrekende Python. |
 | `Invalid production configuration` | `.env` mist een sleutel van 32+ tekens, `https://` in `KASFLOW_PUBLIC_URL`, of PostgreSQL. |
@@ -87,6 +93,7 @@ Draai je ooit vanaf SSH op de server, dan is dit de snelste controle:
 ```bash
 cd /pad/naar/documentroot
 bash plesk/bootstrap.sh          # eenmalig of na een wijziging in requirements
+tail -n 20 backend/logs/bootstrap.log   # welke Python en wat pip deed
 curl -sS http://127.0.0.1/api/health   # alleen als er een proxy naar PHP loopt
 php -r 'echo "php ok\n";'
 ```

@@ -1,70 +1,118 @@
 #!/bin/bash
 # Zet venv, packages en .env klaar. Wordt aangeroepen door proxy.php (eerste
 # /api-verzoek) en kan met de hand: bash plesk/bootstrap.sh
-set -euo pipefail
+#
+# Waarom dit script zo omslachtig is: Plesk-hosting heeft vaak meerdere Python-
+# versies naast elkaar, en een venv die ooit met een oude versie is gemaakt
+# blijft anders voor altijd kapot. Daarom kiest dit script de nieuwste Python,
+# maakt de venv opnieuw als die van een andere versie is, en schrijft het pip-
+# logboek naar backend/logs/bootstrap.log.
+set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 mkdir -p "$ROOT/backend/uploads" "$ROOT/backend/logs"
+LOG="$ROOT/backend/logs/bootstrap.log"
 
-python_bin() {
-  for c in \
-    /opt/plesk/python/3.13/bin/python3 \
-    /opt/plesk/python/3.12/bin/python3 \
-    /opt/plesk/python/3.11/bin/python3 \
-    /opt/plesk/python/3.10/bin/python3 \
-    python3.13 python3.12 python3.11 python3.10 python3
-  do
-    if command -v "$c" >/dev/null 2>&1; then
-      command -v "$c"
-      return 0
-    fi
-    if [ -x "$c" ]; then
-      echo "$c"
-      return 0
-    fi
-  done
-  echo "Python 3 ontbreekt op deze hosting." >&2
-  exit 1
-}
+say() { echo "$*" >&2; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >>"$LOG"; }
+fail() { say "FOUT: $*"; exit 1; }
 
-# Twee gelijktijdige verzoeken mogen niet allebei pip installeren.
-LOCK="$ROOT/backend/logs/bootstrap.lock"
+: >"$LOG"
+
+# -- Python zoeken ---------------------------------------------------------
+candidates=()
+for c in /opt/plesk/python/*/bin/python3 /opt/plesk/python/*/bin/python \
+         /usr/local/bin/python3.* /usr/bin/python3.* \
+         /usr/local/bin/python3 /usr/bin/python3; do
+  [ -x "$c" ] && candidates+=("$c")
+done
+if command -v python3 >/dev/null 2>&1; then
+  candidates+=("$(command -v python3)")
+fi
+
+best=""
+best_score=0
+best_version=""
+for c in "${candidates[@]}"; do
+  version="$("$c" -c 'import sys;print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)" || continue
+  score="$("$c" -c 'import sys;print(sys.version_info[0]*10000+sys.version_info[1]*100+sys.version_info[2])' 2>/dev/null)" || continue
+  if [ "${score:-0}" -gt "$best_score" ]; then
+    best="$c"
+    best_score="$score"
+    best_version="$version"
+  fi
+done
+
+[ -n "$best" ] || fail "Geen Python 3 gevonden op deze hosting. Vraag de host om Python 3.10 of nieuwer."
+say "Nieuwste Python: $best_version ($best)"
+
+mm="${best_version%.*}"
+case "$mm" in
+  3.8|3.9) REQUIREMENTS="$ROOT/backend/requirements-legacy.txt" ;;
+  *) REQUIREMENTS="$ROOT/backend/requirements.txt" ;;
+esac
+say "Packages: $(basename "$REQUIREMENTS")"
+
+# -- venv ------------------------------------------------------------------
+lock="$ROOT/backend/logs/bootstrap.lock"
 if command -v flock >/dev/null 2>&1; then
-  exec 9>"$LOCK"
-  flock -w 170 9 || { echo "Een andere bootstrap loopt nog." >&2; exit 1; }
+  exec 9>"$lock"
+  flock -w 170 9 || fail "Een andere installatie loopt nog. Probeer het zo opnieuw."
 fi
 
-PY="$(python_bin)"
-if [ ! -x "$ROOT/venv/bin/python" ] || ! "$ROOT/venv/bin/python" -V >/dev/null 2>&1; then
+stamp="$ROOT/venv/.kasflow-python"
+vpy="$ROOT/venv/bin/python"
+recreate=0
+[ -x "$vpy" ] || recreate=1
+if [ "$recreate" = "0" ]; then
+  current="$(cat "$stamp" 2>/dev/null || true)"
+  # Geen stempel betekent een venv van vóór deze versie van het script.
+  [ "$current" = "$mm" ] || recreate=1
+fi
+if [ "$recreate" = "0" ]; then
+  "$vpy" -c 'import sys' >/dev/null 2>&1 || recreate=1
+fi
+if [ "$recreate" = "1" ]; then
+  say "Nieuwe venv maken met $best_version"
   rm -rf "$ROOT/venv"
-  "$PY" -m venv "$ROOT/venv" || {
-    echo "venv maken mislukt met $PY. Heeft de hosting de module venv?" >&2
-    exit 1
-  }
+  "$best" -m venv "$ROOT/venv" >>"$LOG" 2>&1 \
+    || fail "De venv kon niet worden gemaakt met $best_version. Mist de hosting de module venv (python3-venv)?"
+  echo "$mm" >"$stamp"
 fi
 
-"$ROOT/venv/bin/python" -m pip install -q -U pip >/dev/null 2>&1 || true
-if ! "$ROOT/venv/bin/python" -m pip install -q -r "$ROOT/backend/requirements.txt"; then
-  echo "pip install is mislukt. Meestal blokkeert de hosting uitgaand verkeer naar PyPI." >&2
-  exit 1
+# -- pip en packages -------------------------------------------------------
+if ! "$vpy" -m pip --version >>"$LOG" 2>&1; then
+  say "pip ontbreekt in de venv; ensurepip proberen"
+  "$vpy" -m ensurepip --upgrade >>"$LOG" 2>&1 || true
+fi
+"$vpy" -m pip --version >>"$LOG" 2>&1 \
+  || fail "pip ontbreekt in de venv ($best_version) en kon niet worden geïnstalleerd."
+
+"$vpy" -m pip install -q -U pip >>"$LOG" 2>&1 || true
+say "Packages installeren (kan een minuut duren)"
+if ! "$vpy" -m pip install -q -r "$REQUIREMENTS" >>"$LOG" 2>&1; then
+  fail "pip install is mislukt met Python $best_version: $(tail -n 3 "$LOG" | tr '\n' ' ')"
 fi
 
-if ! "$ROOT/venv/bin/python" -c 'import fastapi, a2wsgi, dotenv, sqlalchemy, reportlab, httpx' >/dev/null 2>&1; then
-  echo "De packages staan in de venv, maar zijn niet importeerbaar." >&2
-  exit 1
-fi
+missing="$("$vpy" - <<'PY'
+import importlib.util
+modules = ["fastapi", "uvicorn", "sqlalchemy", "dotenv", "a2wsgi", "reportlab", "httpx", "itsdangerous"]
+print(", ".join(m for m in modules if importlib.util.find_spec(m) is None))
+PY
+)"
+[ -z "$missing" ] || fail "Na het installeren ontbreken nog: $missing."
 
+# -- .env ------------------------------------------------------------------
 if [ ! -f "$ROOT/.env" ]; then
-  KEY="$("$ROOT/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
-  HOST="$(basename "$ROOT")"
-  case "$HOST" in
-    httpdocs|httpsdocs|kasflow) HOST="kasflow-app.webnestiq.nl" ;;
+  key="$("$vpy" -c 'import secrets; print(secrets.token_urlsafe(48))')"
+  host="$(basename "$ROOT")"
+  case "$host" in
+    httpdocs|httpsdocs|kasflow) host="kasflow-app.webnestiq.nl" ;;
   esac
-  cat > "$ROOT/.env" <<EOF
+  cat >"$ROOT/.env" <<EOF
 KASFLOW_ENV=production
-KASFLOW_SECRET_KEY=${KEY}
-KASFLOW_PUBLIC_URL=https://${HOST}
-KASFLOW_ALLOWED_HOSTS=${HOST},127.0.0.1,localhost
+KASFLOW_SECRET_KEY=${key}
+KASFLOW_PUBLIC_URL=https://${host}
+KASFLOW_ALLOWED_HOSTS=${host},127.0.0.1,localhost
 KASFLOW_ALLOW_SQLITE=1
 KASFLOW_DATABASE_URL=sqlite:///${ROOT}/backend/kasflow.sqlite3
 KASFLOW_UPLOAD_DIR=${ROOT}/backend/uploads
@@ -73,7 +121,7 @@ KASFLOW_KVK_BASE_URL=
 KASFLOW_MOLLIE_API_KEY=
 EOF
   chmod 600 "$ROOT/.env"
-  echo ".env aangemaakt voor ${HOST}" >&2
+  say ".env aangemaakt voor ${host}"
 fi
 
-echo "Klaar: $("$ROOT/venv/bin/python" -V) in $ROOT/venv" >&2
+say "Klaar: Python $best_version, venv in $ROOT/venv"

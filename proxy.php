@@ -102,14 +102,31 @@ function kasflow_venv_python($root)
     return null;
 }
 
+/** Vingerafdruk van beide eisenlijsten, zodat een wijziging opvalt. */
+function kasflow_requirements_hash($root)
+{
+    $parts = '';
+    foreach (array('/backend/requirements.txt', '/backend/requirements-legacy.txt') as $rel) {
+        $file = $root . $rel;
+        $parts .= is_file($file) ? md5_file($file) : '-';
+    }
+    return md5($parts);
+}
+
 function kasflow_deps_state($root)
 {
     $marker = $root . '/backend/logs/deps.ok';
-    $requirements = $root . '/backend/requirements.txt';
-    if (!is_file($marker) || !is_file($requirements)) {
+    if (!is_file($marker)) {
         return 'onbekend';
     }
-    return trim((string) file_get_contents($marker)) === md5_file($requirements) ? 'ok' : 'verouderd';
+    return trim((string) file_get_contents($marker)) === kasflow_requirements_hash($root) ? 'ok' : 'verouderd';
+}
+
+function kasflow_python_version($python, $root)
+{
+    list(, $out, $err) = kasflow_proc(array($python, '-V'), $root, kasflow_base_env($root), '', 20);
+    $version = trim($out . ' ' . $err);
+    return $version !== '' ? $version : 'onbekende Python';
 }
 
 function kasflow_base_env($root)
@@ -147,7 +164,7 @@ function kasflow_ensure_ready($root)
         '',
         170
     );
-    $log = kasflow_tail($err . ' ' . $out, 2);
+    $log = kasflow_tail($err . ' ' . $out, 3);
 
     $python = kasflow_venv_python($root);
     if ($python === null) {
@@ -162,12 +179,13 @@ function kasflow_ensure_ready($root)
         60
     );
     if (!$ok) {
-        return 'De Python-packages ontbreken nog. ' . kasflow_tail($probeErr . ' ' . $probe, 2);
+        return 'De Python-packages ontbreken nog (' . kasflow_python_version($python, $root) . '). '
+            . $log . ' ' . kasflow_tail($probeErr . ' ' . $probe, 1);
     }
 
     $marker = $root . '/backend/logs/deps.ok';
     if (is_dir(dirname($marker))) {
-        @file_put_contents($marker, (string) md5_file($root . '/backend/requirements.txt'));
+        @file_put_contents($marker, kasflow_requirements_hash($root));
     }
 
     return null;
