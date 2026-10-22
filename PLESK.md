@@ -196,15 +196,32 @@ sudo systemctl restart kasflow   # of in Plesk de PHP/Python-app herstarten
 
 ## 7. Bijwerken
 
+Alleen `git pull` is niet genoeg: gunicorn blijft de oude Python-code en de
+oude `signup.html` in het geheugen houden tot je de service herstart.
+
 ```bash
 cd /var/www/vhosts/app.jouwdomein.nl/kasflow
 ./plesk/backup.sh
 git pull
 source venv/bin/activate
 pip install -r backend/requirements.txt
+# Verplicht: anders blijft de oude KVK-check (zonder Bedrijfsdata) draaien.
 sudo systemctl restart kasflow
 curl -sS https://app.jouwdomein.nl/api/health
+curl -sS "https://app.jouwdomein.nl/api/kvk/lookup?kvk_number=42101005"
 ```
+
+`/api/health` moet `"kvk":"bedrijfsdata"` bevatten. Ontbreekt dat veld, dan
+draait nog de oude worker — herstart opnieuw en controleer
+`WorkingDirectory` in `/etc/systemd/system/kasflow.service`.
+
+De lookup van `42101005` moet `"name":"webnestiQ"` teruggeven. Krijg je HTML,
+`404` of `"Not Found"`, dan proxy’t de webserver `/api` niet naar gunicorn
+(zie §8).
+
+Zet `KASFLOW_KVK_API_KEY` in `.env` **niet** op een placeholder. Een ongeldige
+sleutel dwingt de officiële KVK-API af; die weigert echte eenmanszaken zonder
+betaalde key.
 
 Migraties draaien bij het starten en zijn additief.
 
@@ -219,6 +236,8 @@ Migraties draaien bij het starten en zijn additief.
 | "Betalen is op deze server nog niet ingesteld" | `KASFLOW_MOLLIE_API_KEY` leeg; daarna service herstarten |
 | Betaling blijft op "wacht op betaling" | webhook onbereikbaar: `KASFLOW_PUBLIC_URL` moet publiek `https://` zijn |
 | Pagina's laden, maar `/api/health` geeft 404 | de webserver serveert alleen statische bestanden; de Python-app draait niet |
+| KVK-nummer “konden we niet controleren” na deploy | service niet herstart, of `KASFLOW_KVK_API_KEY` in `.env` gevuld met een nep-sleutel; `curl` de lookup hierboven |
+| `/api/health` mist `"kvk"` | gunicorn draait nog de oude code; `sudo systemctl restart kasflow` |
 | Registreren zegt "geen geldig antwoord (fout 404)" | zelfde oorzaak: geen Python-proces op deze hosting |
 | 502 Bad Gateway | `kasflow.service` draait niet; `journalctl -u kasflow -e` |
 | Styling weg / oude pagina | service worker; hard refresh of `kasflow-v…` in `sw.js` |

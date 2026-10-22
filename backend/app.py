@@ -2092,9 +2092,7 @@ def create_app(
             company = kvk_client.lookup(kvk_number)
         except KvkInactive as error:
             raise_kvk(error)
-        except KvkError as error:
-            if getattr(kvk_client, "strict", True):
-                raise_kvk(error)
+        except KvkError:
             digits = re.sub(r"\D", "", kvk_number or "")
             return {
                 "kvk_number": digits,
@@ -2374,6 +2372,7 @@ def create_app(
             "database": database,
             "mail": "smtp" if mailer.configured else "log",
             "env": settings.env,
+            "kvk": "bedrijfsdata" if not getattr(kvk_client, "strict", False) else "kvk-api",
         }
 
     # -- Account (AVG) ----------------------------------------------------

@@ -252,17 +252,32 @@ class KvkClient:
             return self._hits[number]
         if number in self._misses:
             raise KvkNotFound()
+        last: KvkError | None = None
         if self.strict:
-            company = self._zoeken(self.base_url, number)
-            self._hits[number] = company
-            return company
-        company = self._lookup_public(number)
+            try:
+                company = self._zoeken(self.base_url, number)
+                self._hits[number] = company
+                return company
+            except KvkInactive:
+                raise
+            except (KvkNotFound, KvkUnavailable, KvkBusy, KvkNotConfigured) as error:
+                last = error
+        try:
+            company = self._lookup_public(number)
+        except KvkError:
+            if last is not None:
+                raise last
+            raise
         self._hits[number] = company
         return company
 
     def _lookup_public(self, number: str) -> KvkCompany:
         last: KvkError | None = None
-        for source in (self._bedrijfsdata, self._zoeken_current, self._opendata):
+        sources = [self._bedrijfsdata]
+        if not self.strict:
+            sources.append(self._zoeken_current)
+        sources.append(self._opendata)
+        for source in sources:
             try:
                 return source(number)
             except KvkInactive:
@@ -279,13 +294,22 @@ class KvkClient:
     def _zoeken_current(self, number: str) -> KvkCompany:
         return self._zoeken(self.base_url, number)
 
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Kasflow/2.0 (boekhoudapp)",
+        }
+        if extra:
+            headers.update(extra)
+        return headers
+
     def _zoeken(self, base_url: str, number: str) -> KvkCompany:
         url = f"{base_url.rstrip('/')}/api/v2/zoeken"
         try:
             response = httpx.get(
                 url,
                 params={"kvkNummer": number, "resultatenPerPagina": 10},
-                headers={"apikey": self.api_key, "Accept": "application/json"},
+                headers=self._headers({"apikey": self.api_key}),
                 timeout=self.timeout,
             )
         except httpx.HTTPError as error:
@@ -312,7 +336,7 @@ class KvkClient:
             response = httpx.get(
                 BEDRIJFSDATA_URL,
                 params={"kvk": number},
-                headers={"Accept": "application/json"},
+                headers=self._headers(),
                 timeout=self.timeout,
             )
         except httpx.HTTPError as error:
@@ -332,7 +356,7 @@ class KvkClient:
         try:
             response = httpx.get(
                 url,
-                headers={"Accept": "application/json"},
+                headers=self._headers(),
                 timeout=self.timeout,
             )
         except httpx.HTTPError as error:

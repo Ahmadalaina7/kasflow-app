@@ -188,7 +188,8 @@
 
   async function lookupKvk(number) {
     const response = await fetch('/api/kvk/lookup?kvk_number=' + encodeURIComponent(number), {
-      headers: { Accept: 'application/json' }
+      headers: { Accept: 'application/json' },
+      cache: 'no-store'
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {
