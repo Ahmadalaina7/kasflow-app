@@ -2087,7 +2087,7 @@ def create_app(
 
     @app.get("/api/kvk/lookup")
     def lookup_kvk(kvk_number: str, request: Request):
-        enforce(request, "kvk-lookup", 20, 3600)
+        enforce(request, "kvk-lookup", 60, 3600)
         try:
             company = kvk_client.lookup(kvk_number)
         except KvkInactive as error:

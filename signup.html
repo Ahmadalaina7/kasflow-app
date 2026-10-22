@@ -201,6 +201,25 @@
     return String(value || '').replace(/\D/g, '').slice(0, 8);
   }
 
+  function applyKvkLookup(result) {
+    if (!result) return;
+    if (result.verified !== false && result.name) {
+      companyInput.value = result.name;
+    } else if (!companyInput.value.trim() && result.name) {
+      companyInput.value = result.name;
+    }
+    if (result.verified === false) {
+      setKvkStatus('We konden dit nummer niet automatisch bij KVK controleren. Vul je officiële bedrijfsnaam in; die bevestig je zelf.', 'warning');
+      return;
+    }
+    if (result.name) {
+      const place = result.city ? ', ' + result.city : '';
+      setKvkStatus('Gevonden bij KVK: ' + result.name + place, 'success');
+      return;
+    }
+    setKvkStatus('Dit KVK-nummer is bekend. Vul de officiële bedrijfsnaam in.', 'success');
+  }
+
   function readKvk() {
     const number = digitsKvk(kvkInput.value);
     if (kvkInput.value !== number) kvkInput.value = number;
@@ -215,29 +234,21 @@
       return false;
     }
     if (kvkLookup && kvkLookup.kvk_number === number) {
-      if (!companyInput.value.trim() && kvkLookup.name) companyInput.value = kvkLookup.name;
+      applyKvkLookup(kvkLookup);
       return true;
     }
     setKvkStatus('Controleren bij KVK…');
     try {
       kvkLookup = await lookupKvk(number);
-      if (!companyInput.value.trim() && kvkLookup.name) companyInput.value = kvkLookup.name;
-      if (kvkLookup.verified === false) {
-        setKvkStatus('We konden dit nummer niet automatisch bij KVK controleren. Vul je officiële bedrijfsnaam in; die bevestig je zelf.', 'warning');
-        return true;
-      }
-      if (kvkLookup.name) {
-        const place = kvkLookup.city ? ', ' + kvkLookup.city : '';
-        setKvkStatus('Gevonden bij KVK: ' + kvkLookup.name + place, 'success');
-      } else {
-        setKvkStatus('Dit KVK-nummer is bekend. Vul de officiële bedrijfsnaam in.', 'success');
-      }
+      applyKvkLookup(kvkLookup);
       return true;
     } catch (error) {
-      kvkLookup = null;
-      setKvkStatus(error.message, 'error');
-      kvkInput.focus();
-      return false;
+      kvkLookup = { kvk_number: number, name: '', verified: false };
+      setKvkStatus(
+        'We konden dit nummer niet automatisch controleren. Vul je officiële bedrijfsnaam in; die bevestig je zelf.',
+        'warning'
+      );
+      return true;
     }
   }
 
