@@ -1325,7 +1325,7 @@ def create_app(
         headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; connect-src 'self' https://free.bedrijfsdata.nl; font-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; "
             "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
         )
         if settings.production:

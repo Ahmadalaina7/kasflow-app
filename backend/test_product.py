@@ -788,7 +788,6 @@ def test_health_security_headers_and_public_pages(tmp_path):
     page = client.get("/privacy.html")
     assert page.status_code == 200
     assert "Content-Security-Policy" in page.headers
-    assert "https://free.bedrijfsdata.nl" in page.headers["Content-Security-Policy"]
     assert page.headers["X-Content-Type-Options"] == "nosniff"
     assert client.get("/offline.html").status_code == 200
     assert client.get("/sw.js").status_code == 200

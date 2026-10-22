@@ -1,11 +1,9 @@
-# /api draait als CGI (kasflow.cgi), zodat Git-deploy werkt zonder poort 8010
-# en zonder systemd. LiteSpeed voert .cgi uit als de abonnement-gebruiker.
-
-AddHandler cgi-script .cgi
+# LiteSpeed/Apache: /api via PHP. CGI-scripts zijn op deze hosting 403.
+# PHP start Python per verzoek (geen poort 8010, geen systemd).
 
 RewriteEngine On
 RewriteRule ^\.well-known/ - [L]
-RewriteRule ^api(/.*)?$ kasflow.cgi [L,QSA]
+RewriteRule ^api(/.*)?$ proxy.php [L,QSA]
 
 <Files ".env">
     <IfModule mod_authz_core.c>

@@ -1,9 +1,9 @@
 <?php
 /**
- * Stuurt /api naar Kasflow op 127.0.0.1:8010.
- * Staat de app niet aan, dan probeert dit script plesk/start.sh (geen root).
+ * /api op Plesk: voer FastAPI uit als Python-CGI vanuit PHP.
+ * LiteSpeed verbiedt .cgi (403). Poort 8010 is niet nodig.
  */
-set_time_limit(90);
+set_time_limit(180);
 
 $path = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
 $pathname = parse_url($path, PHP_URL_PATH);
@@ -13,120 +13,141 @@ if (!is_string($pathname) || strpos($pathname, '/api/') !== 0) {
     exit;
 }
 
-$backend = getenv('KASFLOW_BACKEND') ? getenv('KASFLOW_BACKEND') : 'http://127.0.0.1:8010';
 $root = __DIR__;
+$method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+$body = in_array($method, array('GET', 'HEAD'), true) ? '' : (string) file_get_contents('php://input');
 
-function kasflow_port_open()
+function kasflow_disabled()
 {
-    $fp = @fsockopen('127.0.0.1', 8010, $errno, $errstr, 0.4);
-    if (is_resource($fp)) {
-        fclose($fp);
-        return true;
-    }
-    return false;
+    return array_map('trim', explode(',', (string) ini_get('disable_functions')));
 }
 
-function kasflow_can_exec()
+function kasflow_fail($message, $status = 503)
 {
-    $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
-    return !in_array('exec', $disabled, true);
-}
-
-function kasflow_ensure_running($root)
-{
-    if (kasflow_port_open()) {
-        return true;
-    }
-    if (!kasflow_can_exec()) {
-        return false;
-    }
-    $start = $root . '/plesk/start.sh';
-    $deploy = $root . '/plesk/deploy.sh';
-    $log = $root . '/backend/logs';
-    if (!is_dir($log)) {
-        @mkdir($log, 0770, true);
-    }
-    $script = is_file($root . '/venv/bin/gunicorn') ? $start : $deploy;
-    if (!is_file($script)) {
-        return false;
-    }
-    $cmd = 'bash ' . escapeshellarg($script) . ' >> ' . escapeshellarg($log . '/autostart.log') . ' 2>&1';
-    exec($cmd);
-    for ($i = 0; $i < 20; $i++) {
-        if (kasflow_port_open()) {
-            return true;
-        }
-        usleep(400000);
-    }
-    return kasflow_port_open();
-}
-
-if (!kasflow_ensure_running($root)) {
-    header('Content-Type: application/json; charset=utf-8', true, 503);
-    echo json_encode(array(
-        'detail' => 'Kasflow is na Git-deploy niet gestart. In Plesk bij Git: Extra implementatie-acties = bash plesk/deploy.sh. Daarna de site opnieuw publiceren.',
-    ));
+    header('Content-Type: application/json; charset=utf-8', true, $status);
+    echo json_encode(array('detail' => $message), JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-$url = rtrim($backend, '/') . $path;
-$method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
-$https = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
-$host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
-
-$headers = array();
-foreach ($_SERVER as $key => $value) {
-    if (strpos($key, 'HTTP_') !== 0) {
-        continue;
+function kasflow_proc($command, $cwd, $env, $stdin = '')
+{
+    if (in_array('proc_open', kasflow_disabled(), true)) {
+        return array(false, '', 'proc_open is uitgeschakeld');
     }
-    $name = strtolower(str_replace('_', '-', substr($key, 5)));
-    if (in_array($name, array('host', 'connection', 'content-length', 'transfer-encoding'), true)) {
-        continue;
+    $spec = array(
+        0 => array('pipe', 'r'),
+        1 => array('pipe', 'w'),
+        2 => array('pipe', 'w'),
+    );
+    $proc = proc_open($command, $spec, $pipes, $cwd, $env);
+    if (!is_resource($proc)) {
+        return array(false, '', 'proc_open gaf geen proces');
     }
-    $headers[] = $name . ': ' . $value;
+    if ($stdin !== '') {
+        fwrite($pipes[0], $stdin);
+    }
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]);
+    $err = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $code = proc_close($proc);
+    return array($code === 0, $out, $err);
 }
-if (!empty($_SERVER['CONTENT_TYPE'])) {
-    $headers[] = 'Content-Type: ' . $_SERVER['CONTENT_TYPE'];
-}
-$headers[] = 'Host: ' . $host;
-$headers[] = 'X-Forwarded-Host: ' . $host;
-$headers[] = 'X-Forwarded-Proto: ' . ($https ? 'https' : 'http');
-$headers[] = 'X-Forwarded-For: ' . (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '');
 
-$body = in_array($method, array('GET', 'HEAD'), true) ? null : file_get_contents('php://input');
-
-$curl = curl_init($url);
-$options = array(
-    CURLOPT_CUSTOMREQUEST => $method,
-    CURLOPT_HTTPHEADER => $headers,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_HEADER => true,
-    CURLOPT_TIMEOUT => 120,
-    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-);
-if ($body !== null && $body !== false && $body !== '') {
-    $options[CURLOPT_POSTFIELDS] = $body;
-}
-curl_setopt_array($curl, $options);
-$raw = curl_exec($curl);
-$errno = curl_errno($curl);
-$headerSize = (int) curl_getinfo($curl, CURLINFO_HEADER_SIZE);
-$status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-curl_close($curl);
-
-if ($raw === false || $errno) {
-    header('Content-Type: application/json; charset=utf-8', true, 503);
-    echo json_encode(array(
-        'detail' => 'Kasflow is na Git-deploy niet gestart. In Plesk bij Git: Extra implementatie-acties = bash plesk/deploy.sh. Daarna de site opnieuw publiceren.',
+function kasflow_bootstrap($root)
+{
+    $python = $root . '/venv/bin/python';
+    if (is_executable($python) && is_file($root . '/.env')) {
+        return $python;
+    }
+    $script = $root . '/plesk/bootstrap.sh';
+    if (!is_file($script)) {
+        kasflow_fail('bootstrap.sh ontbreekt in de documentroot. Git-deploy opnieuw uitvoeren.');
+    }
+    list($ok, $out, $err) = kasflow_proc(array('/bin/bash', $script), $root, array(
+        'PATH' => '/opt/plesk/python/3.11/bin:/usr/local/bin:/usr/bin:/bin',
+        'HOME' => $root,
+        'PWD' => $root,
     ));
+    $python = $root . '/venv/bin/python';
+    if (!is_executable($python)) {
+        $log = trim($err . "\n" . $out);
+        kasflow_fail('Python kon niet worden geïnstalleerd. ' . ($log ? $log : 'Draai in SSH: bash plesk/bootstrap.sh'));
+    }
+    return $python;
+}
+
+$python = kasflow_bootstrap($root);
+$env = array(
+    'PATH' => '/usr/local/bin:/usr/bin:/bin',
+    'HOME' => $root,
+    'PWD' => $root,
+    'PYTHONUNBUFFERED' => '1',
+    'PYTHONDONTWRITEBYTECODE' => '1',
+    'REQUEST_METHOD' => $method,
+    'REQUEST_URI' => $path,
+    'SCRIPT_NAME' => '',
+    'PATH_INFO' => $pathname,
+    'QUERY_STRING' => isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : '',
+    'CONTENT_TYPE' => isset($_SERVER['CONTENT_TYPE']) ? $_SERVER['CONTENT_TYPE'] : '',
+    'CONTENT_LENGTH' => (string) strlen($body),
+    'SERVER_NAME' => isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost',
+    'SERVER_PORT' => isset($_SERVER['SERVER_PORT']) ? $_SERVER['SERVER_PORT'] : '443',
+    'SERVER_PROTOCOL' => 'HTTP/1.1',
+    'REMOTE_ADDR' => isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '',
+    'HTTPS' => 'on',
+    'HTTP_HOST' => isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '',
+    'HTTP_COOKIE' => isset($_SERVER['HTTP_COOKIE']) ? $_SERVER['HTTP_COOKIE'] : '',
+    'HTTP_ORIGIN' => isset($_SERVER['HTTP_ORIGIN']) ? $_SERVER['HTTP_ORIGIN'] : '',
+    'HTTP_ACCEPT' => isset($_SERVER['HTTP_ACCEPT']) ? $_SERVER['HTTP_ACCEPT'] : 'application/json',
+    'HTTP_USER_AGENT' => isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : 'Kasflow',
+    'HTTP_X_FORWARDED_PROTO' => 'https',
+    'HTTP_X_FORWARDED_FOR' => isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '',
+);
+foreach ($_SERVER as $key => $value) {
+    if (strpos($key, 'HTTP_') === 0 && is_string($value) && !isset($env[$key])) {
+        $env[$key] = $value;
+    }
+}
+
+list($ok, $raw, $err) = kasflow_proc(
+    array($python, $root . '/plesk/cgi_app.py'),
+    $root,
+    $env,
+    $body
+);
+
+if ($raw === '' || $raw === false) {
+    $log = trim($err);
+    kasflow_fail($log ? $log : 'Python startte niet. Controleer backend/logs/cgi.log');
+}
+
+$headerSize = strpos($raw, "\r\n\r\n");
+$sep = "\r\n\r\n";
+if ($headerSize === false) {
+    $headerSize = strpos($raw, "\n\n");
+    $sep = "\n\n";
+}
+if ($headerSize === false) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo $raw;
     exit;
 }
 
 $head = substr($raw, 0, $headerSize);
-$payload = substr($raw, $headerSize);
-http_response_code($status ? $status : 502);
-foreach (explode("\r\n", $head) as $line) {
-    if ($line === '' || strncmp($line, 'HTTP/', 5) === 0) {
+$payload = substr($raw, $headerSize + strlen($sep));
+$status = 200;
+foreach (preg_split("/\r\n|\n/", $head) as $line) {
+    if ($line === '') {
+        continue;
+    }
+    if (preg_match('/^Status:\s+(\d+)/i', $line, $match)) {
+        $status = (int) $match[1];
+        continue;
+    }
+    if (preg_match('/^HTTP\/\d\.\d\s+(\d+)/', $line, $match)) {
+        $status = (int) $match[1];
         continue;
     }
     $lower = strtolower($line);
@@ -135,4 +156,5 @@ foreach (explode("\r\n", $head) as $line) {
     }
     header($line, false);
 }
+http_response_code($status);
 echo $payload;

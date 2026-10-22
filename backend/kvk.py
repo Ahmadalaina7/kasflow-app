@@ -240,36 +240,21 @@ class KvkClient:
             return PermissiveKvk()
         key = getattr(settings, "kvk_api_key", "") or ""
         override = getattr(settings, "kvk_base_url", "") or ""
-        if key:
-            return cls(api_key=key, base_url=override or PRODUCTION_BASE, strict=True)
-        return cls(api_key=TEST_API_KEY, base_url=override or TEST_BASE, strict=False)
+        return cls(
+            api_key=key or TEST_API_KEY,
+            base_url=override or (PRODUCTION_BASE if key else TEST_BASE),
+            strict=False,
+        )
 
     def lookup(self, kvk_number: str) -> KvkCompany:
         number = re.sub(r"\D", "", kvk_number or "")
         if len(number) != 8:
             raise KvkNotFound()
-        if number in self._hits:
-            return self._hits[number]
-        if number in self._misses:
-            raise KvkNotFound()
-        last: KvkError | None = None
         if self.strict:
-            try:
-                company = self._zoeken(self.base_url, number)
-                self._hits[number] = company
-                return company
-            except KvkInactive:
-                raise
-            except (KvkNotFound, KvkUnavailable, KvkBusy, KvkNotConfigured) as error:
-                last = error
-        try:
-            company = self._lookup_public(number)
-        except KvkError:
-            if last is not None:
-                raise last
-            raise
-        self._hits[number] = company
-        return company
+            company = self._zoeken(self.base_url, number)
+            self._hits[number] = company
+            return company
+        raise KvkNotFound()
 
     def _lookup_public(self, number: str) -> KvkCompany:
         last: KvkError | None = None

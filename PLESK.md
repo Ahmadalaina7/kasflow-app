@@ -21,17 +21,11 @@ Python **3.11 of nieuwer**. De app weigert te starten in productie zonder
 
 ## Git-deploy (LiteSpeed)
 
-Na `git pull` voert LiteSpeed `/api` uit via `kasflow.cgi` (geen poort 8010).
-De eerste aanroep naar `/api/health` maakt `venv` en `.env` aan; dat kan een
-minuut duren. Daarna moet https://kasflow-app.webnestiq.nl/api/health JSON zijn.
+LiteSpeed blokkeert CGI (403). `/api` gaat via `proxy.php`, dat FastAPI met
+Python uitvoert. Documentroot = de git-map (`proxy.php` naast `signup.html`).
 
-Documentroot = de git-map (waar `kasflow.cgi` en `signup.html` staan).
-
-Optioneel sneller: Plesk > Git > Extra implementatie-acties:
-
-```bash
-bash plesk/bootstrap.sh
-```
+Eerste bezoek aan https://kasflow-app.webnestiq.nl/api/health kan een minuut
+duren (`venv`). Daarna JSON met `"status":"ok"`.
 
 ## 1. Code op de server
 

@@ -60,7 +60,7 @@
         <div class="field-group">
           <label class="field-label" for="kvk">KVK-nummer</label>
           <input id="kvk" class="field-control" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="16" placeholder="12345678" required>
-          <div class="field-hint">8 cijfers. Punten of spaties mag je laten staan; die halen we weg.</div>
+          <div class="field-hint">8 cijfers. Punten of spaties mag je laten staan; die halen we weg. Vul de naam in zoals bij KVK.</div>
           <p class="field-hint" id="kvk-status" role="status" aria-live="polite"></p>
         </div>
         <div class="field-group" style="margin-top:18px">
@@ -145,8 +145,6 @@
   const companyInput = document.getElementById('company-name');
   const kvkStatus = document.getElementById('kvk-status');
   let activeIndex = 0;
-  let kvkTimer = 0;
-  let kvkLookup = null;
 
   fetch('/api/auth/me', { headers: { Accept: 'application/json' } })
     .then(response => {
@@ -186,81 +184,8 @@
     return fallback;
   }
 
-  function companyFromBedrijfsdata(number, payload) {
-    const rows = payload && Array.isArray(payload.kvk) ? payload.kvk : [];
-    const active = rows.filter(function (row) {
-      return row && row.active !== 0 && row.active !== '0' && row.active !== false;
-    });
-    if (rows.length && !active.length) {
-      throw new Error('Dit bedrijf is uitgeschreven bij KVK. Je kunt er geen account mee openen.');
-    }
-    if (!active.length) return null;
-    const preferred = active.find(function (row) {
-      return String(row.type || '').toLowerCase() === 'hoofdvestiging';
-    }) || active[0];
-    const names = [];
-    [preferred].concat(active).forEach(function (row) {
-      const naam = String(row.name || '').trim();
-      if (naam && names.indexOf(naam) === -1) names.push(naam);
-    });
-    return {
-      kvk_number: number,
-      name: names[0] || '',
-      city: String(preferred.city || ''),
-      street: '',
-      active: true,
-      verified: true
-    };
-  }
-
-  async function lookupKvkDirect(number) {
-    const response = await fetch('https://free.bedrijfsdata.nl/v1.1/kvk?kvk=' + encodeURIComponent(number), {
-      headers: { Accept: 'application/json' },
-      cache: 'no-store'
-    });
-    if (!response.ok) return null;
-    return companyFromBedrijfsdata(number, await response.json());
-  }
-
-  async function lookupKvk(number) {
-    try {
-      const direct = await lookupKvkDirect(number);
-      if (direct && direct.name) return direct;
-    } catch (error) {
-      if (error && /uitgeschreven/i.test(error.message)) throw error;
-    }
-    const response = await fetch('/api/kvk/lookup?kvk_number=' + encodeURIComponent(number), {
-      headers: { Accept: 'application/json' },
-      cache: 'no-store'
-    });
-    const result = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(apiMessage(result, 'Dit KVK-nummer konden we niet controleren.'));
-    }
-    return result;
-  }
-
   function digitsKvk(value) {
     return String(value || '').replace(/\D/g, '').slice(0, 8);
-  }
-
-  function applyKvkLookup(result) {
-    if (!result) return;
-    if (result.verified !== false && result.name) {
-      companyInput.value = result.name;
-    } else if (!companyInput.value.trim() && result.name) {
-      companyInput.value = result.name;
-    }
-    if (result.verified === false) {
-      setKvkStatus('We konden dit nummer niet automatisch bij KVK controleren. Vul je officiële bedrijfsnaam in; die bevestig je zelf.', 'warning');
-      return;
-    }
-    if (result.name) {
-      const place = result.city ? ', ' + result.city : '';
-      setKvkStatus('Gevonden bij KVK: ' + result.name + place, 'success');
-      return;
-    }
-    setKvkStatus('Dit KVK-nummer is bekend. Vul de officiële bedrijfsnaam in.', 'success');
   }
 
   function readKvk() {
@@ -269,47 +194,22 @@
     return number;
   }
 
-  async function ensureCompany() {
+  function ensureCompany() {
     const number = readKvk();
     if (number.length !== 8) {
       setKvkStatus('Vul een KVK-nummer van 8 cijfers in.', 'error');
       kvkInput.focus();
       return false;
     }
-    if (kvkLookup && kvkLookup.kvk_number === number) {
-      applyKvkLookup(kvkLookup);
-      return true;
+    if (!companyInput.value.trim()) {
+      setKvkStatus('Vul de bedrijfsnaam in.', 'error');
+      companyInput.focus();
+      return false;
     }
-    setKvkStatus('Controleren bij KVK…');
-    try {
-      kvkLookup = await lookupKvk(number);
-      applyKvkLookup(kvkLookup);
-      return true;
-    } catch (error) {
-      kvkLookup = { kvk_number: number, name: '', verified: false };
-      setKvkStatus(
-        'We konden dit nummer niet automatisch controleren. Vul je officiële bedrijfsnaam in; die bevestig je zelf.',
-        'warning'
-      );
-      return true;
-    }
+    setKvkStatus('');
+    return true;
   }
 
-  function scheduleKvkLookup() {
-    kvkLookup = null;
-    window.clearTimeout(kvkTimer);
-    const number = readKvk();
-    if (number.length !== 8) {
-      setKvkStatus('');
-      return;
-    }
-    kvkTimer = window.setTimeout(() => {
-      ensureCompany();
-    }, 350);
-  }
-
-  kvkInput.addEventListener('input', scheduleKvkLookup);
-  kvkInput.addEventListener('change', scheduleKvkLookup);
   kvkInput.addEventListener('blur', () => {
     readKvk();
   });
@@ -323,10 +223,7 @@
         kvkInput.focus();
         return;
       }
-      nextButton.disabled = true;
-      const ok = await ensureCompany();
-      nextButton.disabled = false;
-      if (!ok) return;
+      if (!ensureCompany()) return;
     }
     const invalid = firstInvalidInStep(activeIndex);
     if (invalid) {
@@ -399,7 +296,7 @@
       if (!response.ok) {
         let message = apiMessage(result, '');
         if (!message && !result) {
-          message = `De pagina laadt, maar /api geeft fout ${response.status}. Open /api/health: daar moet JSON staan. Ontbreekt die, dan draait Kasflow niet (sudo systemctl start kasflow) of ontbreekt de reverse-proxy in Plesk.`;
+          message = apiMessage(result, `Account aanmaken is niet gelukt (fout ${response.status}).`);
         } else if (!message) {
           message = `Account aanmaken is niet gelukt (fout ${response.status}).`;
         }

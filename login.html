@@ -117,8 +117,8 @@
           console.error('Onverwacht antwoord van de server:', response.status, body.slice(0, 300));
         }
         const message = error && error.detail
-          ? error.detail
-          : `De pagina laadt, maar /api geeft fout ${response.status}. Open /api/health: daar moet JSON staan. Ontbreekt die, dan draait Kasflow niet (sudo systemctl start kasflow) of ontbreekt de reverse-proxy in Plesk.`;
+          ? String(error.detail)
+          : `Inloggen is niet gelukt (fout ${response.status}).`;
         if (response.status === 403) {
           Kasflow.note(feedback, message + ' Vraag een nieuwe link aan of registreer opnieuw.', 'warning');
           Kasflow.setBusy(submit, false);
