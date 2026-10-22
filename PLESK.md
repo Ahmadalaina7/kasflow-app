@@ -19,6 +19,24 @@ Python **3.11 of nieuwer**. De app weigert te starten in productie zonder
 4. **Webhostingtoegang** > SSH inschakelen voor deze gebruiker (jailshell mag).
 5. Noteer de **systeemgebruiker** van het abonnement (bijvoorbeeld `jouwdomein`).
 
+## Git-deploy (LiteSpeed, zonder systemd)
+
+Plesk zet na een Git-pull **alleen bestanden** klaar. Daardoor laadt
+`signup.html`, maar luistert er niets op poort 8010.
+
+1. **Plesk > Git** (of Websites > Git): repository `Ahmadalaina7/kasflow-app`,
+   deploy-pad = documentroot van `kasflow-app.webnestiq.nl`.
+2. **Extra implementatie-acties** (verplicht):
+
+```bash
+bash plesk/deploy.sh
+```
+
+3. Opslaan en **Implementeren**. `deploy.sh` maakt `venv` en `.env` aan en start
+   gunicorn. Daarna moet `https://kasflow-app.webnestiq.nl/api/health` JSON geven.
+
+Zonder die ene regel blijft de melding “Kasflow draait niet op poort 8010”.
+
 ## 1. Code op de server
 
 SSH naar de server als de Plesk-gebruiker (niet als root, behalve bij systemd):

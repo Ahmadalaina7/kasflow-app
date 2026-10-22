@@ -30,6 +30,15 @@ if [ ! -f "$ROOT/.env" ]; then
   exit 1
 fi
 
+LOCKFILE="$ROOT/backend/kasflow.lock"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCKFILE"
+  if ! flock -n 9; then
+    echo "Een andere start loopt al"
+    exit 0
+  fi
+fi
+
 if [ -f "$PIDFILE" ]; then
   old="$(cat "$PIDFILE" 2>/dev/null || true)"
   if [ -n "${old:-}" ] && kill -0 "$old" 2>/dev/null; then

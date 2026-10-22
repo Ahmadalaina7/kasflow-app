@@ -937,6 +937,20 @@ def test_production_never_stores_a_signing_key_on_disk(tmp_path, monkeypatch):
     assert not secret_file.exists()
 
 
+def test_production_sqlite_is_allowed_with_the_plesk_flag(monkeypatch):
+    from config import Settings
+
+    monkeypatch.setenv("KASFLOW_ENV", "production")
+    monkeypatch.setenv("KASFLOW_SECRET_KEY", "s" * 48)
+    monkeypatch.setenv("KASFLOW_PUBLIC_URL", "https://kasflow-app.webnestiq.nl")
+    monkeypatch.setenv("KASFLOW_DATABASE_URL", "sqlite:///kasflow.sqlite3")
+    monkeypatch.setenv("KASFLOW_ALLOW_SQLITE", "1")
+    monkeypatch.setenv("KASFLOW_ALLOWED_HOSTS", "kasflow-app.webnestiq.nl")
+    settings = Settings.from_environment()
+    settings.validate()
+    assert "127.0.0.1" in settings.allowed_hosts
+
+
 def test_login_session_still_works_after_a_restart(tmp_path):
     """Een herstart van de server mag een ingelogde gebruiker niet uitloggen."""
     from config import Settings

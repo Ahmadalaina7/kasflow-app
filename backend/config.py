@@ -67,6 +67,7 @@ class Settings:
     mollie_api_key: str = ""
     kvk_api_key: str = ""
     kvk_base_url: str = ""
+    allow_sqlite: bool = False
 
     @property
     def production(self) -> bool:
@@ -86,6 +87,8 @@ class Settings:
     def from_environment(cls) -> "Settings":
         raw_hosts = os.getenv("KASFLOW_ALLOWED_HOSTS", "").strip()
         allowed = tuple(host.strip() for host in raw_hosts.split(",") if host.strip())
+        if allowed:
+            allowed = tuple(dict.fromkeys(allowed + ("127.0.0.1", "localhost")))
         try:
             session_max_age = int(os.getenv("KASFLOW_SESSION_MAX_AGE", "43200"))
         except ValueError:
@@ -113,6 +116,8 @@ class Settings:
             mollie_api_key=os.getenv("KASFLOW_MOLLIE_API_KEY", "").strip(),
             kvk_api_key=os.getenv("KASFLOW_KVK_API_KEY", "").strip(),
             kvk_base_url=os.getenv("KASFLOW_KVK_BASE_URL", "").strip().rstrip("/"),
+            allow_sqlite=os.getenv("KASFLOW_ALLOW_SQLITE", "").strip().lower()
+            in {"1", "true", "yes", "on"},
         )
 
     def validate(self) -> None:
@@ -124,7 +129,7 @@ class Settings:
             problems.append("KASFLOW_SECRET_KEY must be at least 32 characters")
         if not self.public_url.startswith("https://"):
             problems.append("KASFLOW_PUBLIC_URL must use https:// in production")
-        if self.database_url.startswith("sqlite"):
+        if self.database_url.startswith("sqlite") and not self.allow_sqlite:
             problems.append("KASFLOW_DATABASE_URL must point at PostgreSQL in production")
         if problems:
             raise RuntimeError("Invalid production configuration: " + "; ".join(problems))
