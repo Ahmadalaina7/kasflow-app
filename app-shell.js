@@ -5,6 +5,7 @@
     dashboard:
       '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
     facturen: '<path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 7h3"/>',
+    offertes: '<path d="M6 3h9l4 4v14H6z"/><path d="M9 16l2.5 2.5L16 12"/>',
     bonnetjes:
       '<path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
     btw: '<path d="M4 19V5m0 14h16"/><path d="M8 15l4-5 3 2 4-6"/>',
@@ -21,6 +22,7 @@
   const NAV = [
     { id: 'dashboard', href: 'dashboard.html', label: 'Dashboard', tab: true, perm: 'dashboard.read' },
     { id: 'facturen', href: 'facturen.html', label: 'Facturen', tab: true, perm: 'invoices.read' },
+    { id: 'offertes', href: 'offertes.html', label: 'Offertes', perm: 'invoices.read' },
     { id: 'bonnetjes', href: 'bonnetjes.html', label: 'Bonnetjes', tab: true, perm: 'receipts.read' },
     { id: 'btw', href: 'btw.html', label: 'BTW', fullLabel: 'BTW & aangifte', tab: true, perm: 'vat.read' },
     { id: 'bank', href: 'bank.html', label: 'Bank', perm: 'bank.read' },
@@ -41,7 +43,7 @@
     return NAV.filter(item => can(user, item.perm));
   }
 
-  const PAGE_ALIASES = { 'factuur.html': 'facturen' };
+  const PAGE_ALIASES = { 'factuur.html': 'facturen', 'offerte.html': 'offertes' };
   const ORIGINAL_TITLE = document.title;
   const file = window.location.pathname.split('/').pop() || 'dashboard.html';
   const currentPage = PAGE_ALIASES[file] || (document.body.dataset.page || file.replace('.html', ''));
@@ -150,7 +152,7 @@
     sheet.setAttribute('aria-label', 'Meer navigatie');
     sheet.hidden = true;
 
-    const moreActive = ['bank', 'uren', 'jaaroverzicht', 'klanten', 'instellingen'].includes(currentPage);
+    const moreActive = ['offertes', 'bank', 'uren', 'jaaroverzicht', 'klanten', 'instellingen'].includes(currentPage);
     const moreToggle = () => document.getElementById('more-toggle');
 
     const openSheet = () => {

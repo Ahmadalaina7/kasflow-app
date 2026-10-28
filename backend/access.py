@@ -113,6 +113,7 @@ def write_permission_for(path: str, method: str) -> str | None:
     rules: Iterable[tuple[str, str]] = (
         ("/api/team", "team.write"),
         ("/api/invoices", "invoices.write"),
+        ("/api/quotes", "invoices.write"),
         ("/api/receipts", "receipts.write"),
         ("/api/customers", "customers.write"),
         ("/api/bank", "bank.write"),
@@ -123,7 +124,7 @@ def write_permission_for(path: str, method: str) -> str | None:
     )
     for prefix, permission in rules:
         if path.startswith(prefix):
-            if prefix == "/api/invoices" and (
+            if prefix in {"/api/invoices", "/api/quotes"} and (
                 path.endswith("/send") or path.endswith("/remind")
             ):
                 return "invoices.send"

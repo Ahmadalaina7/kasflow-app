@@ -246,6 +246,53 @@ tr td:last-child, tr th:last-child{ padding-right:0; }
 .badge.overdue{ background:rgba(194,72,61,0.1); color:var(--danger); }
 .data-table tr.row-selected td{ background:rgba(14,159,110,0.06); }
 .badge.credited{ background:rgba(100,116,139,0.12); color:var(--ink-500); }
+/* Offertes hebben eigen statussen; die kleuren mogen niet met de
+ * factuurbetekenis worden verward (openstaand is geen concept). */
+.badge.draft{ background:rgba(100,116,139,0.12); color:var(--ink-500); }
+.badge.sent{ background:rgba(29,58,102,0.1); color:var(--navy-700); }
+.badge.accepted{ background:rgba(14,159,110,0.12); color:var(--emerald-600); }
+.badge.declined{ background:rgba(194,72,61,0.1); color:var(--danger); }
+.badge.invoiced{ background:rgba(14,159,110,0.1); color:#0B7350; }
+.badge.expired{ background:rgba(100,116,139,0.12); color:#7C8798; }
+
+/* ---------- Publieke offertepagina ---------- */
+/* De klant heeft geen account, dus geen app-shell: één kaart, geen navigatie. */
+.quote-public{ width:100%; max-width:600px; margin-inline:auto; }
+.quote-public .panel{ background:#fff; padding:26px; }
+.quote-public-head{
+  display:flex; align-items:flex-start; justify-content:space-between;
+  gap:16px; margin-bottom:22px;
+}
+.quote-public-head h1{
+  font-family:var(--display); font-size:1.4rem; font-weight:700;
+  color:var(--navy-900); letter-spacing:-0.02em;
+}
+.quote-parties{
+  display:grid; gap:18px; grid-template-columns:1fr 1fr;
+  margin-bottom:22px; font-size:0.88rem; line-height:1.6;
+}
+.quote-parties strong{ color:var(--navy-900); }
+.quote-lines{ width:100%; border-collapse:collapse; }
+.quote-lines th{
+  font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;
+  color:var(--ink-500); text-align:left; padding-bottom:10px;
+  border-bottom:1px solid var(--line); white-space:nowrap;
+}
+.quote-lines td{
+  font-size:0.88rem; padding:11px 0; vertical-align:top;
+  border-bottom:1px solid var(--line);
+}
+.quote-lines .num{ text-align:right; white-space:nowrap; }
+.quote-qty{ display:none; }
+@media (max-width: 640px){
+  .quote-parties{ grid-template-columns:1fr; }
+  .quote-lines th:nth-child(2),.quote-lines td:nth-child(2),
+  .quote-lines th:nth-child(3),.quote-lines td:nth-child(3){ display:none; }
+  .quote-qty{
+    display:block; margin-bottom:3px;
+    font-size:0.76rem; color:var(--ink-500);
+  }
+}
 .pill{
   display:inline-flex; align-items:center; gap:7px;
   padding:7px 13px; border-radius:999px;

@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Nieuwe offerte</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="offertes">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Nieuwe offerte</h1>
+        <div class="topbar-sub">Zet je voorstel op papier. Na opslaan stuur je hem en geeft je klant online akkoord.</div>
+      </div>
+      <div class="topbar-actions">
+        <a href="offertes.html" class="btn btn-outline">Terug naar offertes</a>
+      </div>
+    </div>
+
+    <div class="alert" id="quote-alert" hidden></div>
+
+    <form id="quote-form" novalidate>
+      <div class="form-grid">
+        <section class="form-card">
+          <h2>Offertegegevens</h2>
+          <div class="field-group">
+            <label class="field-label" for="quote-customer">Klant</label>
+            <select id="quote-customer" class="field-control" required>
+              <option value="">Kies een klant</option>
+            </select>
+            <div class="field-hint">Klant nog niet aangemaakt? <a class="table-link" href="klanten.html">Voeg een klant toe</a>.</div>
+          </div>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="quote-number">Offertenummer</label>
+              <input id="quote-number" class="field-control" type="text" readonly>
+              <div class="field-hint">Automatisch, zodat er nooit twee dezelfde nummers ontstaan.</div>
+            </div>
+            <div>
+              <label class="field-label" for="quote-date">Offertedatum</label>
+              <input id="quote-date" class="field-control" type="date" required>
+            </div>
+          </div>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="valid-until">Geldig tot</label>
+              <input id="valid-until" class="field-control" type="date" required>
+            </div>
+            <div>
+              <label class="field-label" for="validity">Geldigheid</label>
+              <select id="validity" class="field-control">
+                <option value="14">14 dagen</option>
+                <option value="30" selected>30 dagen</option>
+                <option value="60">60 dagen</option>
+                <option value="90">90 dagen</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-group" style="margin-top:18px" id="quote-treatment-group">
+            <label class="field-label" for="quote-vat-treatment">Btw-behandeling</label>
+            <select id="quote-vat-treatment" class="field-control">
+              <option value="standard">Normaal (21%, 9% of 0% per regel)</option>
+              <option value="reverse_charge">Btw verlegd naar Nederlandse afnemer</option>
+              <option value="intra_eu">Klant in een ander EU-land (btw verlegd)</option>
+              <option value="export">Uitvoer buiten de EU</option>
+            </select>
+            <div class="field-hint" id="quote-treatment-hint">De btw-behandeling op de offerte wordt dezelfde op de factuur die eruit volgt.</div>
+          </div>
+          <div class="field-group" style="margin-top:18px">
+            <label class="field-label" for="quote-note">Toelichting op de offerte (optioneel)</label>
+            <textarea id="quote-note" class="field-control" rows="3" maxlength="1000" placeholder="Bijv. Uitvoering in week 45, prijs inclusief materiaal."></textarea>
+            <div class="field-hint">Deze tekst staat ook in de e-mail en op de pdf, zodat je klant hem niet kan missen.</div>
+          </div>
+        </section>
+
+        <section class="form-card">
+          <h2>Offerte regels</h2>
+          <div class="table-wrap">
+            <table class="line-table">
+              <thead>
+                <tr>
+                  <th>Omschrijving</th>
+                  <th>Aantal</th>
+                  <th>Prijs excl. btw</th>
+                  <th>Btw</th>
+                  <th style="text-align:right">Regeltotaal</th>
+                  <th><span class="sr-only">Verwijderen</span></th>
+                </tr>
+              </thead>
+              <tbody id="quote-lines"></tbody>
+            </table>
+          </div>
+          <p class="field-hint" style="margin-top:12px">Vul de bedragen <strong>zonder btw</strong> in. Kasflow rekent de btw erbij en
+laat het totaal per regel zien. Dezelfde berekening wordt later de factuur, dus je hoeft niets over te typen.</p>
+          <div class="form-actions">
+            <button type="button" class="btn btn-outline btn-sm" id="add-line">+ Regel toevoegen</button>
+          </div>
+
+          <div class="summary-card">
+            <div class="summary-row"><span>Subtotaal excl. btw</span><strong id="summary-subtotal">€ 0,00</strong></div>
+            <div class="summary-row"><span>Btw</span><strong id="summary-tax">€ 0,00</strong></div>
+            <div class="summary-row total"><span>Totaal</span><strong id="summary-total">€ 0,00</strong></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="form-actions end">
+        <a href="offertes.html" class="btn btn-outline">Annuleren</a>
+        <button type="submit" class="btn btn-primary" id="save-quote">Offerte opslaan</button>
+      </div>
+      <p id="quote-feedback" class="form-note" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+</div>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, money, note, setBusy } = Kasflow;
+  const lineContainer = document.getElementById('quote-lines');
+  const subtotalEl = document.getElementById('summary-subtotal');
+  const taxEl = document.getElementById('summary-tax');
+  const totalEl = document.getElementById('summary-total');
+  const quoteForm = document.getElementById('quote-form');
+  const feedback = document.getElementById('quote-feedback');
+  const customerSelect = document.getElementById('quote-customer');
+  const quoteNumber = document.getElementById('quote-number');
+  const quoteDate = document.getElementById('quote-date');
+  const validUntil = document.getElementById('valid-until');
+  const validity = document.getElementById('validity');
+  const quoteNote = document.getElementById('quote-note');
+  const saveButton = document.getElementById('save-quote');
+  const quoteAlert = document.getElementById('quote-alert');
+  const treatmentSelect = document.getElementById('quote-vat-treatment');
+  const treatmentHint = document.getElementById('quote-treatment-hint');
+  let korUser = false;
+
+  function zeroRateOnly() {
+    return korUser || treatmentSelect.value !== 'standard';
+  }
+
+  function applyTreatment() {
+    const locked = zeroRateOnly();
+    lineContainer.querySelectorAll('.line-tax').forEach(select => {
+      if (locked) select.value = '0';
+      select.disabled = locked;
+    });
+    treatmentHint.textContent = zeroRateOnly()
+      ? 'Alle regels krijgen 0%. De offerte en de factuur vermelden dezelfde btw-behandeling.'
+      : 'De btw-behandeling op de offerte wordt dezelfde op de factuur die eruit volgt.';
+    recalc();
+  }
+
+  function asLocalDate(value) {
+    const offset = value.getTimezoneOffset();
+    return new Date(value.getTime() - offset * 60000).toISOString().slice(0, 10);
+  }
+
+  function addDays(value, days) {
+    const next = new Date(value.getTime());
+    next.setDate(next.getDate() + days);
+    return next;
+  }
+
+  function recalc() {
+    let subtotalCents = 0;
+    let taxCents = 0;
+    [...lineContainer.querySelectorAll('tr')].forEach(row => {
+      const qty = parseFloat(row.querySelector('.line-qty').value) || 0;
+      const price = parseFloat(row.querySelector('.line-price').value) || 0;
+      const rate = parseFloat(row.querySelector('.line-tax').value) || 0;
+      // Integer math in thousandths of a cent, rounded half up like the server.
+      const net = Math.floor((Math.round(qty * 1000) * Math.round(price * 100) + 500) / 1000);
+      const tax = Math.round(net * rate);
+      subtotalCents += net;
+      taxCents += tax;
+      row.querySelector('.line-total').textContent = money(net + tax);
+    });
+    subtotalEl.textContent = money(subtotalCents);
+    taxEl.textContent = money(taxCents);
+    totalEl.textContent = money(subtotalCents + taxCents);
+    updateRemoveButtons();
+  }
+
+  function updateRemoveButtons() {
+    const rows = lineContainer.querySelectorAll('tr');
+    rows.forEach(row => {
+      const remove = row.querySelector('.line-remove');
+      if (remove) remove.disabled = rows.length === 1;
+    });
+  }
+
+  function addLine(description, quantity, price, vatRate) {
+    const row = document.createElement('tr');
+
+    function cell(label) {
+      const td = document.createElement('td');
+      td.dataset.label = label;
+      return td;
+    }
+
+    const descriptionCell = cell('Omschrijving');
+    const descriptionInput = document.createElement('input');
+    descriptionInput.type = 'text';
+    descriptionInput.className = 'field-control line-desc';
+    descriptionInput.placeholder = 'Bijv. Websiteontwerp';
+    descriptionInput.setAttribute('aria-label', 'Omschrijving');
+    descriptionInput.required = true;
+    descriptionInput.maxLength = 500;
+    descriptionInput.value = description || '';
+    descriptionCell.append(descriptionInput);
+
+    const quantityCell = cell('Aantal');
+    const quantityInput = document.createElement('input');
+    quantityInput.type = 'number';
+    quantityInput.className = 'field-control line-qty';
+    quantityInput.min = '0.001';
+    quantityInput.step = '0.001';
+    quantityInput.setAttribute('aria-label', 'Aantal');
+    quantityInput.value = quantity == null ? '1' : String(quantity);
+    quantityCell.append(quantityInput);
+
+    const priceCell = cell('Prijs');
+    const priceInput = document.createElement('input');
+    priceInput.type = 'number';
+    priceInput.className = 'field-control line-price';
+    priceInput.min = '0';
+    priceInput.step = '0.01';
+    priceInput.setAttribute('aria-label', 'Prijs exclusief btw');
+    priceInput.value = price == null ? '0.00' : String(price);
+    priceCell.append(priceInput);
+
+    const vatCell = cell('Btw');
+    const vatSelect = document.createElement('select');
+    vatSelect.className = 'field-control line-tax';
+    vatSelect.setAttribute('aria-label', 'Btw-tarief');
+    [['0.21', '21%'], ['0.09', '9%'], ['0', '0%']].forEach(optionValue => {
+      vatSelect.add(new Option(optionValue[1], optionValue[0]));
+    });
+    vatSelect.value = vatRate == null ? '0.21' : String(vatRate);
+    if (zeroRateOnly()) {
+      vatSelect.value = '0';
+      vatSelect.disabled = true;
+    }
+    vatCell.append(vatSelect);
+
+    const totalCell = cell('Regeltotaal');
+    totalCell.className = 'line-total';
+    totalCell.textContent = money(0);
+
+    const actionCell = cell('');
+    actionCell.className = 'line-action';
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'line-remove';
+    removeButton.setAttribute('aria-label', 'Verwijder regel');
+    removeButton.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>';
+    removeButton.addEventListener('click', () => {
+      if (lineContainer.querySelectorAll('tr').length <= 1) return;
+      row.remove();
+      recalc();
+    });
+    actionCell.append(removeButton);
+
+    row.append(descriptionCell, quantityCell, priceCell, vatCell, totalCell, actionCell);
+    row.querySelectorAll('input, select').forEach(input => input.addEventListener('input', recalc));
+    lineContainer.append(row);
+    recalc();
+    return row;
+  }
+
+  function syncValidUntil() {
+    if (!quoteDate.value) return;
+    const base = new Date(quoteDate.value + 'T00:00:00');
+    validUntil.value = asLocalDate(addDays(base, Number(validity.value) || 30));
+  }
+
+  async function loadQuoteOptions(user) {
+    const [customers, nextNumber] = await Promise.all([
+      api('/api/customers'),
+      api('/api/quotes/next-number').catch(() => null)
+    ]);
+
+    customerSelect.querySelectorAll('option:not(:first-child)').forEach(option => option.remove());
+    customers.forEach(customer => customerSelect.add(new Option(customer.name, customer.id)));
+
+    const params = new URLSearchParams(window.location.search);
+    const requestedCustomer = params.get('customer');
+    if (requestedCustomer) customerSelect.value = requestedCustomer;
+
+    quoteNumber.value = nextNumber && nextNumber.number ? nextNumber.number : 'Automatisch';
+
+    korUser = Boolean(user && user.vat_scheme === 'kor');
+    if (korUser) {
+      document.getElementById('quote-treatment-group').hidden = true;
+      applyTreatment();
+    }
+
+    quoteDate.value = asLocalDate(new Date());
+    syncValidUntil();
+
+    if (!customers.length) {
+      quoteAlert.hidden = false;
+      quoteAlert.className = 'alert warning';
+      quoteAlert.innerHTML = '<div><strong>Voeg eerst een klant toe.</strong> Een offerte hoort altijd bij een klant. ' +
+        '<a class="table-link" href="klanten.html">Klant toevoegen</a>.</div>';
+      customerSelect.disabled = true;
+      saveButton.disabled = true;
+    } else if (!user || !user.street || !user.postal_code || !user.city) {
+      quoteAlert.hidden = false;
+      quoteAlert.className = 'alert warning';
+      quoteAlert.innerHTML = '<div><strong>Vul eerst je bedrijfsadres in.</strong> ' +
+        'Je klant ziet je naam en adres bovenaan de offerte. ' +
+        '<a class="table-link" href="instellingen.html">Naar instellingen</a>.</div>';
+    }
+  }
+
+  treatmentSelect.addEventListener('change', applyTreatment);
+  quoteDate.addEventListener('change', syncValidUntil);
+  validity.addEventListener('change', syncValidUntil);
+
+  quoteForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    note(feedback, '');
+
+    if (!customerSelect.value) {
+      note(feedback, 'Kies een klant voor deze offerte.', 'error');
+      customerSelect.focus();
+      return;
+    }
+    if (!quoteForm.checkValidity()) {
+      quoteForm.reportValidity();
+      return;
+    }
+
+    const lines = [];
+    let hasInvalidLine = false;
+    [...lineContainer.querySelectorAll('tr')].forEach(row => {
+      const description = row.querySelector('.line-desc').value.trim();
+      const quantity = row.querySelector('.line-qty').value;
+      const price = row.querySelector('.line-price').value;
+      if (!description || !(Number(quantity) > 0) || Number(price) < 0 || price === '') {
+        hasInvalidLine = true;
+        return;
+      }
+      lines.push({
+        description,
+        quantity,
+        unit_price: price,
+        vat_rate: row.querySelector('.line-tax').value
+      });
+    });
+
+    if (hasInvalidLine || !lines.length) {
+      note(feedback, 'Vul bij elke regel een omschrijving, aantal en prijs in.', 'error');
+      return;
+    }
+    if (validUntil.value < quoteDate.value) {
+      note(feedback, 'De geldigheidsdatum mag niet voor de offertedatum liggen.', 'error');
+      return;
+    }
+    setBusy(saveButton, true, 'Opslaan…');
+    try {
+      const quote = await api('/api/quotes', {
+        method: 'POST',
+        body: {
+          customer_id: Number(customerSelect.value),
+          quote_date: quoteDate.value,
+          valid_until: validUntil.value,
+          note: quoteNote.value.trim() || null,
+          vat_treatment: korUser ? 'standard' : treatmentSelect.value,
+          lines
+        }
+      });
+      window.location.href = 'offertes.html?saved=' + encodeURIComponent(quote.number) + '&quote=' + quote.id;
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      setBusy(saveButton, false);
+    }
+  });
+
+  document.getElementById('add-line').addEventListener('click', () => {
+    const row = addLine('', 1, 0, '0.21');
+    row.querySelector('.line-desc').focus();
+  });
+
+  addLine('', 1, 0, '0.21');
+  Kasflow.ready
+    .then(user => loadQuoteOptions(user))
+    .catch(error => note(feedback, error.message, 'error'));
+})();
+</script>
+
+</body>
+</html>

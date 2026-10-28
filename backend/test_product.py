@@ -1262,3 +1262,196 @@ def test_trial_migration_survives_two_workers_starting_together(tmp_path):
     # En een tweede volledige migratieronde is gewoon idempotent.
     ensure_trials(engine)
 
+
+
+# ---- Offertes met online akkoord -----------------------------------------
+
+
+def create_quote(client, customer_id, *, lines=None, days_valid=30, days_old=0):
+    today = date.today()
+    quote_date = today - timedelta(days=days_old)
+    response = client.post(
+        "/api/quotes",
+        json={
+            "customer_id": customer_id,
+            "quote_date": quote_date.isoformat(),
+            "valid_until": (quote_date + timedelta(days=days_valid)).isoformat(),
+            "note": "Prijs inclusief oplevering.",
+            "lines": lines
+            or [
+                {
+                    "description": "Website",
+                    "quantity": "2",
+                    "unit_price": "100.00",
+                    "vat_rate": "0.21",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def quote_token(mailer):
+    for record in mailer.outbox:
+        match = re.search(r"offerte-bekijken\.html\?t=([A-Za-z0-9_\-]+)", record["text"])
+        if match:
+            return match.group(1)
+    raise AssertionError("geen akkoordlink in de offertemail gevonden")
+
+
+def test_quote_runs_from_draft_to_online_accept_to_invoice(tmp_path):
+    client, mailer = verified_client(tmp_path)
+    complete_profile(client)
+    customer = create_customer(client)
+
+    quote = create_quote(
+        client,
+        customer["id"],
+        lines=[
+            {"description": "Website", "quantity": "2", "unit_price": "100.00", "vat_rate": "0.21"},
+            {"description": "Onderhoud", "quantity": "1", "unit_price": "100.00", "vat_rate": "0.09"},
+        ],
+    )
+    assert quote["number"].startswith(f"OFF-{date.today().year}-")
+    assert quote["status"] == "draft"
+    assert quote["subtotal_cents"] == 30000
+    assert quote["vat_cents"] == 5100
+    assert quote["total_cents"] == 35100
+    assert quote["public_url"] is None
+    assert quote["expired"] is False
+
+    sent = client.post(f"/api/quotes/{quote['id']}/send", json={})
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["sent"] is True
+    assert mailer.delivered[-1]["Subject"] == f"Offerte {quote['number']} van Studio Veer"
+    token = quote_token(mailer)
+
+    detail = client.get(f"/api/quotes/{quote['id']}").json()
+    assert detail["status"] == "sent"
+    assert detail["public_url"].endswith(token)
+
+    # De klant heeft geen account: een eigen client zonder sessiecookie.
+    customer_view = TestClient(client.app)
+    page = customer_view.get(f"/api/quotes/public/{token}")
+    assert page.status_code == 200, page.text
+    public = page.json()
+    assert public["number"] == quote["number"]
+    assert public["supplier"]["name"] == "Studio Veer"
+    assert public["total_cents"] == 35100
+    assert public["can_respond"] is True
+    assert [line["description"] for line in public["lines"]] == ["Website", "Onderhoud"]
+
+    assert customer_view.post(
+        f"/api/quotes/public/{token}/accept", json={"name": "A"}
+    ).status_code == 422
+    assert client.post(f"/api/quotes/{quote['id']}/invoice").status_code == 409
+
+    accepted = customer_view.post(
+        f"/api/quotes/public/{token}/accept",
+        json={"name": "Sanne de Vries", "note": "Graag starten in november."},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["status"] == "accepted"
+    assert accepted.json()["can_respond"] is False
+    # Nog eens klikken (dubbel verzoek) is geen fout.
+    assert customer_view.post(
+        f"/api/quotes/public/{token}/accept", json={"name": "Sanne de Vries"}
+    ).status_code == 200
+
+    # De eigenaar mag een verstuurde offerte niet meer aanpassen.
+    assert client.patch(
+        f"/api/quotes/{quote['id']}",
+        json={
+            "customer_id": customer["id"],
+            "quote_date": date.today().isoformat(),
+            "valid_until": (date.today() + timedelta(days=30)).isoformat(),
+            "lines": [
+                {"description": "Website", "quantity": "1", "unit_price": "1.00", "vat_rate": "0.21"}
+            ],
+        },
+    ).status_code == 409
+
+    invoice = client.post(f"/api/quotes/{quote['id']}/invoice")
+    assert invoice.status_code == 201, invoice.text
+    created = invoice.json()
+    assert created["total_cents"] == 35100
+    assert created["vat_cents"] == 5100
+    assert [line["net_cents"] for line in created["lines"]] == [20000, 10000]
+    assert created["status"] == "pending"
+
+    after = client.get(f"/api/quotes/{quote['id']}").json()
+    assert after["status"] == "invoiced"
+    assert after["invoice_id"] == created["id"]
+    assert after["invoice_number"] == created["number"]
+
+    again = client.post(f"/api/quotes/{quote['id']}/invoice")
+    assert again.status_code == 409
+    assert created["number"] in again.json()["detail"]
+
+    pdf = client.get(f"/api/quotes/{quote['id']}/pdf")
+    assert pdf.status_code == 200
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert "offerte-" in pdf.headers["content-disposition"]
+    assert pdf.content.startswith(b"%PDF")
+    for field in [b"OFFERTE", b"GELDIG TOT", b"Website", b"Totaal", quote["number"].encode()]:
+        assert field in pdf.content, field
+
+
+def test_quote_that_is_expired_cannot_be_accepted(tmp_path):
+    client, mailer = verified_client(tmp_path)
+    complete_profile(client)
+    customer = create_customer(client)
+    quote = create_quote(client, customer["id"], days_valid=30, days_old=60)
+    assert client.post(f"/api/quotes/{quote['id']}/send", json={}).status_code == 200
+    token = quote_token(mailer)
+
+    listed = client.get("/api/quotes").json()[0]
+    assert listed["expired"] is True
+    public = TestClient(client.app).get(f"/api/quotes/public/{token}").json()
+    assert public["expired"] is True and public["can_respond"] is False
+
+    response = TestClient(client.app).post(
+        f"/api/quotes/public/{token}/accept", json={"name": "Sanne de Vries"}
+    )
+    assert response.status_code == 409
+    assert "verlopen" in response.json()["detail"]
+
+
+def test_declined_quote_cannot_be_accepted_later(tmp_path):
+    client, mailer = verified_client(tmp_path)
+    complete_profile(client)
+    customer = create_customer(client)
+    quote = create_quote(client, customer["id"])
+    client.post(f"/api/quotes/{quote['id']}/send", json={})
+    token = quote_token(mailer)
+    customer_view = TestClient(client.app)
+
+    declined = customer_view.post(
+        f"/api/quotes/public/{token}/decline",
+        json={"name": "Sanne de Vries", "note": "Te duur."},
+    )
+    assert declined.status_code == 200, declined.text
+    assert declined.json()["status"] == "declined"
+
+    response = customer_view.post(
+        f"/api/quotes/public/{token}/accept", json={"name": "Sanne de Vries"}
+    )
+    assert response.status_code == 409
+    assert client.get(f"/api/quotes/{quote['id']}").json()["status"] == "declined"
+
+
+def test_quotes_and_their_links_stay_inside_one_company(tmp_path):
+    client = client_for(tmp_path)
+    register(client)
+    customer = create_customer(client)
+    quote = create_quote(client, customer["id"])
+
+    neighbour = TestClient(client.app)
+    register(neighbour, email="buurman@example.nl", company_name="Buurman BV")
+    assert neighbour.get("/api/quotes").json() == []
+    assert neighbour.get(f"/api/quotes/{quote['id']}").status_code == 404
+    assert neighbour.get(f"/api/quotes/{quote['id']}/pdf").status_code == 404
+
+    # Een onbekende token bestaat niet, en een token is geen inlogbewijs voor de app.
+    assert TestClient(client.app).get("/api/quotes/public/verzonnen").status_code == 404

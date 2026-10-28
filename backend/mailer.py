@@ -282,6 +282,46 @@ class Mailer:
             attachments=[(pdf_filename, "application/pdf", pdf_bytes)],
         )
 
+    def send_quote(
+        self,
+        *,
+        sender_name: str,
+        customer_name: str,
+        customer_email: str,
+        quote_number: str,
+        total_cents: int,
+        valid_until: str,
+        note: str,
+        accept_url: str,
+        pdf_bytes: bytes,
+        pdf_filename: str,
+    ) -> bool:
+        paragraphs = [
+            f"Hallo {customer_name},",
+            f"In de bijlage vind je offerte {quote_number} van {sender_name} voor "
+            f"{money(total_cents)} inclusief btw.",
+            f"De offerte is geldig tot {valid_until}. Geef je akkoord met de knop hieronder; "
+            "dan hoef je niet te mailen en weten we direct dat we kunnen beginnen.",
+        ]
+        if note:
+            paragraphs.insert(2, note)
+        signature = [
+            f"Deze offerte is verstuurd via Kasflow namens {sender_name}.",
+            "Vragen over deze offerte? Antwoord dan direct op deze e-mail.",
+        ]
+        return self.send(
+            to=customer_email,
+            subject=f"Offerte {quote_number} van {sender_name}",
+            text=_text_body(paragraphs, [f"Offerte bekijken en akkoord geven: {accept_url}"] + signature),
+            html=_html_body(
+                f"Offerte {quote_number}",
+                paragraphs,
+                ("Offerte bekijken en akkoord geven", accept_url),
+                signature,
+            ),
+            attachments=[(pdf_filename, "application/pdf", pdf_bytes)],
+        )
+
     def send_reminder(
         self,
         *,

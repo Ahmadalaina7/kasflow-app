@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Kasflow — Offertes</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body data-page="offertes">
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="logo" href="dashboard.html"><span class="logo-mark" aria-hidden="true"></span>Kasflow</a>
+    <nav class="side-nav" aria-label="Hoofdnavigatie"></nav>
+    <div class="sidebar-foot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Offertes</h1>
+        <div class="topbar-sub" id="quote-summary">Offertes laden…</div>
+      </div>
+      <div class="topbar-actions">
+        <a href="offerte.html" class="btn btn-primary">+ Nieuwe offerte</a>
+      </div>
+    </div>
+
+    <p id="quote-feedback" class="form-note" role="status" aria-live="polite"></p>
+
+    <div class="list-toolbar">
+      <div class="filter-pills" role="group" aria-label="Filter op status">
+        <button type="button" class="filter-pill active" data-filter="all" aria-pressed="true">Alle (0)</button>
+        <button type="button" class="filter-pill" data-filter="draft" aria-pressed="false">Concept (0)</button>
+        <button type="button" class="filter-pill" data-filter="sent" aria-pressed="false">Verstuurd (0)</button>
+        <button type="button" class="filter-pill" data-filter="accepted" aria-pressed="false">Akkoord (0)</button>
+        <button type="button" class="filter-pill" data-filter="declined" aria-pressed="false">Afgewezen (0)</button>
+      </div>
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <label class="sr-only" for="quote-search">Zoek op klant of offertenummer</label>
+        <input id="quote-search" type="search" placeholder="Zoek klant of nummer" autocomplete="off">
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Klant</th><th>Nummer</th><th>Offertedatum</th><th>Geldig tot</th><th>Status</th><th style="text-align:right">Bedrag</th><th></th></tr>
+          </thead>
+          <tbody id="quote-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog class="modal" id="quote-dialog" aria-labelledby="quote-dialog-title">
+  <div class="modal-head">
+    <div>
+      <h2 id="quote-dialog-title">Offerte</h2>
+      <div class="modal-sub" id="quote-dialog-sub"></div>
+    </div>
+    <button type="button" class="icon-button" id="quote-dialog-close" aria-label="Sluit offerte">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="modal-body">
+    <div class="detail-grid">
+      <div><div class="detail-label">Offertedatum</div><div class="detail-value" id="detail-quote-date">—</div></div>
+      <div><div class="detail-label">Geldig tot</div><div class="detail-value" id="detail-valid-until">—</div></div>
+      <div><div class="detail-label">Status</div><div class="detail-value" id="detail-quote-status">—</div></div>
+      <div><div class="detail-label">Klant</div><div class="detail-value" id="detail-quote-customer">—</div></div>
+      <div><div class="detail-label">Verstuurd</div><div class="detail-value" id="detail-quote-sent">—</div></div>
+      <div><div class="detail-label">Reactie klant</div><div class="detail-value" id="detail-quote-response">—</div></div>
+    </div>
+    <div class="table-wrap">
+      <table class="detail-lines">
+        <thead><tr><th>Omschrijving</th><th class="num">Aantal</th><th class="num">Prijs</th><th class="num">Btw</th><th class="num">Bedrag</th></tr></thead>
+        <tbody id="detail-quote-lines"></tbody>
+      </table>
+    </div>
+    <div class="summary-card">
+      <div class="summary-row"><span>Subtotaal excl. btw</span><strong id="detail-quote-subtotal">—</strong></div>
+      <div class="summary-row"><span>Btw</span><strong id="detail-quote-vat">—</strong></div>
+      <div class="summary-row total"><span>Totaal</span><strong id="detail-quote-total">—</strong></div>
+    </div>
+    <p class="form-note" id="detail-quote-feedback" role="status" aria-live="polite"></p>
+  </div>
+  <div class="modal-foot">
+    <button type="button" class="btn btn-outline" id="detail-quote-close">Sluiten</button>
+    <a class="btn btn-outline" id="detail-quote-pdf" href="#">Download PDF</a>
+    <button type="button" class="btn btn-outline" id="detail-quote-delete">Verwijderen</button>
+    <button type="button" class="btn btn-outline" id="detail-quote-link">Link kopiëren</button>
+    <button type="button" class="btn btn-outline" id="detail-quote-send">Verstuur per e-mail</button>
+    <button type="button" class="btn btn-primary" id="detail-quote-invoice">Maak factuur</button>
+  </div>
+</dialog>
+
+<script src="app-shell.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const { api, money, formatShortDate, note, escapeHtml, setBusy } = Kasflow;
+  const pills = [...document.querySelectorAll('.filter-pill')];
+  const searchInput = document.getElementById('quote-search');
+  const tableBody = document.getElementById('quote-table-body');
+  const feedback = document.getElementById('quote-feedback');
+  const summary = document.getElementById('quote-summary');
+  const dialog = document.getElementById('quote-dialog');
+  let quotes = [];
+  let customerNames = new Map();
+  let activeQuote = null;
+
+  const STATUS_LABELS = {
+    draft: 'Concept',
+    sent: 'Verstuurd',
+    accepted: 'Akkoord',
+    declined: 'Afgewezen',
+    invoiced: 'Gefactureerd',
+    expired: 'Verlopen'
+  };
+
+  // Concept, verstuurd, akkoord, afgewezen, gefactureerd of verlopen. De server
+  // rekent de vervaldatum uit; de browser vertaalt dat naar één status.
+  function quoteStatus(quote) {
+    if (quote.status === 'invoiced') return 'invoiced';
+    if (quote.status === 'accepted') return 'accepted';
+    if (quote.status === 'declined') return 'declined';
+    if (quote.expired) return 'expired';
+    if (quote.status === 'sent' || quote.status === 'viewed') return 'sent';
+    return 'draft';
+  }
+
+  function quoteBadge(quote) {
+    const status = quoteStatus(quote);
+    return '<span class="badge ' + status + '"><span class="dot" aria-hidden="true"></span>' +
+      STATUS_LABELS[status] + '</span>';
+  }
+
+  // Een gefactureerde offerte was akkoord; een verlopen offerte was verstuurd.
+  // Zo valt elke offerte onder precies één filterknop.
+  function filterOf(quote) {
+    const status = quoteStatus(quote);
+    if (status === 'invoiced') return 'accepted';
+    if (status === 'expired') return 'sent';
+    return status;
+  }
+
+  function setFilter(filter) {
+    pills.forEach(pill => {
+      const active = pill.dataset.filter === filter;
+      pill.classList.toggle('active', active);
+      pill.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  function currentFilter() {
+    const active = document.querySelector('.filter-pill.active');
+    return active ? active.dataset.filter : 'all';
+  }
+
+  function updateCounts() {
+    const counts = { all: quotes.length, draft: 0, sent: 0, accepted: 0, declined: 0 };
+    quotes.forEach(quote => { counts[filterOf(quote)] += 1; });
+    pills.forEach(pill => {
+      const label = { all: 'Alle', draft: 'Concept', sent: 'Verstuurd', accepted: 'Akkoord', declined: 'Afgewezen' }[pill.dataset.filter];
+      pill.textContent = label + ' (' + counts[pill.dataset.filter] + ')';
+    });
+    const openCents = quotes
+      .filter(quote => ['draft', 'sent'].includes(quoteStatus(quote)))
+      .reduce((sum, quote) => sum + quote.total_cents, 0);
+    summary.textContent = quotes.length
+      ? quotes.length + (quotes.length === 1 ? ' offerte' : ' offertes') + ' — ' + money(openCents) + ' loopt nog.'
+      : 'Nog geen offertes.';
+  }
+
+  function emptyState(title, copy, actionHref, actionLabel) {
+    return '<div class="empty-state">' +
+      '<div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l4 4v14H6z"/><path d="M9 16l2.5 2.5L16 12"/></svg></div>' +
+      '<h3>' + title + '</h3><p>' + copy + '</p>' +
+      (actionHref ? '<a class="btn btn-primary btn-sm" href="' + actionHref + '">' + actionLabel + '</a>' : '') +
+      '</div>';
+  }
+
+  function renderQuotes() {
+    const filter = currentFilter();
+    const query = searchInput.value.trim().toLowerCase();
+    const visible = quotes.filter(quote => {
+      const name = customerNames.get(quote.customer_id) || '';
+      const matchesStatus = filter === 'all' || filterOf(quote) === filter;
+      const matchesQuery = !query || (name + ' ' + quote.number).toLowerCase().includes(query);
+      return matchesStatus && matchesQuery;
+    });
+
+    tableBody.replaceChildren();
+    if (!visible.length) {
+      const row = tableBody.insertRow();
+      row.className = 'empty-row';
+      const cell = row.insertCell();
+      cell.colSpan = 7;
+      cell.innerHTML = quotes.length
+        ? emptyState('Geen offertes in deze selectie', 'Pas het filter of je zoekopdracht aan om andere offertes te zien.', null, null)
+        : emptyState('Nog geen offertes', 'Maak een offerte, stuur hem met één klik en laat je klant online akkoord geven.', 'offerte.html', 'Nieuwe offerte');
+      return;
+    }
+
+    visible.forEach(quote => {
+      const row = tableBody.insertRow();
+      row.innerHTML =
+        '<td data-label="Klant" class="row-name">' + escapeHtml(customerNames.get(quote.customer_id) || 'Onbekende klant') + '</td>' +
+        '<td data-label="Nummer" class="row-sub">' + escapeHtml(quote.number) + '</td>' +
+        '<td data-label="Offertedatum">' + formatShortDate(quote.quote_date) + '</td>' +
+        '<td data-label="Geldig tot">' + formatShortDate(quote.valid_until) + '</td>' +
+        '<td data-label="Status">' + quoteBadge(quote) + '</td>' +
+        '<td data-label="Bedrag" class="amount" style="text-align:right">' + money(quote.total_cents) + '</td>' +
+        '<td class="cell-actions"><button type="button" class="btn btn-outline btn-sm" data-view="' + quote.id + '">Bekijken</button></td>';
+    });
+  }
+
+  function openQuote(quoteId) {
+    const quote = quotes.find(item => item.id === Number(quoteId));
+    if (!quote) return;
+    activeQuote = quote;
+    note(document.getElementById('detail-quote-feedback'), '');
+    const status = quoteStatus(quote);
+    document.getElementById('quote-dialog-title').textContent = 'Offerte ' + quote.number;
+    document.getElementById('quote-dialog-sub').textContent =
+      (customerNames.get(quote.customer_id) || 'Onbekende klant') + ' · ' + money(quote.total_cents) +
+      (quote.invoice_number ? ' · factuur ' + quote.invoice_number : '');
+    document.getElementById('detail-quote-date').textContent = formatShortDate(quote.quote_date);
+    document.getElementById('detail-valid-until').textContent = formatShortDate(quote.valid_until);
+    document.getElementById('detail-quote-status').innerHTML = quoteBadge(quote);
+    document.getElementById('detail-quote-customer').textContent = customerNames.get(quote.customer_id) || '—';
+    document.getElementById('detail-quote-lines').innerHTML = quote.lines.map(line =>
+      '<tr>' +
+      '<td>' + escapeHtml(line.description) + '</td>' +
+      '<td class="num">' + Number(line.quantity).toLocaleString('nl-NL', { maximumFractionDigits: 3 }) + '</td>' +
+      '<td class="num">' + money(line.unit_price_cents) + '</td>' +
+      '<td class="num">' + (line.vat_rate_bps / 100).toLocaleString('nl-NL', { maximumFractionDigits: 2 }) + '%</td>' +
+      '<td class="num">' + money(line.net_cents + line.vat_cents) + '</td>' +
+      '</tr>'
+    ).join('');
+    document.getElementById('detail-quote-subtotal').textContent = money(quote.subtotal_cents);
+    document.getElementById('detail-quote-vat').textContent = money(quote.vat_cents);
+    document.getElementById('detail-quote-total').textContent = money(quote.total_cents);
+    document.getElementById('detail-quote-pdf').href = '/api/quotes/' + quote.id + '/pdf';
+    document.getElementById('detail-quote-sent').textContent = quote.sent_at
+      ? 'Verzonden op ' + formatShortDate(quote.sent_at)
+      : 'Nog niet verstuurd';
+    document.getElementById('detail-quote-response').textContent = quote.responded_at
+      ? STATUS_LABELS[status] + ' door ' + (quote.response_name || 'de klant') +
+        ' op ' + formatShortDate(quote.responded_at) +
+        (quote.response_note ? ' — "' + quote.response_note + '"' : '')
+      : (quote.viewed_at
+        ? 'Bekeken op ' + formatShortDate(quote.viewed_at) + ', nog geen reactie'
+        : 'Nog geen reactie');
+
+    const sendButton = document.getElementById('detail-quote-send');
+    sendButton.hidden = Boolean(quote.invoice_number);
+    sendButton.textContent = quote.sent_at ? 'Opnieuw versturen' : 'Verstuur per e-mail';
+    const deleteButton = document.getElementById('detail-quote-delete');
+    deleteButton.hidden = !['draft', 'declined', 'expired'].includes(status);
+    const invoiceButton = document.getElementById('detail-quote-invoice');
+    invoiceButton.hidden = status !== 'accepted';
+    invoiceButton.textContent = 'Maak factuur';
+
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function closeDialog() {
+    if (dialog.open) dialog.close();
+  }
+
+  async function reloadQuote(quoteId) {
+    const updated = await api('/api/quotes/' + quoteId);
+    quotes = quotes.map(quote => quote.id === updated.id ? updated : quote);
+    updateCounts();
+    renderQuotes();
+    openQuote(updated.id);
+    return updated;
+  }
+
+  async function sendQuote() {
+    if (!activeQuote) return;
+    const button = document.getElementById('detail-quote-send');
+    const name = customerNames.get(activeQuote.customer_id) || 'deze klant';
+    if (!window.confirm('Offerte ' + activeQuote.number + ' per e-mail naar ' + name + ' versturen?\n\nDe klant krijgt een link waarmee hij online akkoord kan geven.')) return;
+    setBusy(button, true, 'Versturen…');
+    try {
+      const result = await api('/api/quotes/' + activeQuote.id + '/send', { method: 'POST', body: {} });
+      await reloadQuote(activeQuote.id);
+      delete button.dataset.originalLabel;
+      note(document.getElementById('detail-quote-feedback'), result.mode === 'smtp'
+        ? 'Offerte verstuurd naar ' + result.to + '. De klant kan nu akkoord geven via de link in de e-mail.'
+        : 'E-mail opgebouwd in logmodus (geen SMTP geconfigureerd) voor ' + result.to + '.',
+        result.mode === 'smtp' ? 'success' : 'warning');
+    } catch (error) {
+      note(document.getElementById('detail-quote-feedback'), error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function copyLink() {
+    if (!activeQuote) return;
+    const button = document.getElementById('detail-quote-link');
+    setBusy(button, true, 'Bezig…');
+    try {
+      let quote = activeQuote;
+      if (!quote.public_url) {
+        // Nog geen link: die maken we nu aan. De offerte gaat daarmee naar
+        // "verstuurd", want de klant kan hem openen zodra je de link deelt.
+        const shared = await api('/api/quotes/' + quote.id + '/link', { method: 'POST', body: {} });
+        quote = await reloadQuote(quote.id);
+        if (!quote.public_url) quote.public_url = shared.url;
+        delete button.dataset.originalLabel;
+      }
+      const url = quote.public_url || '';
+      try {
+        await navigator.clipboard.writeText(url);
+        note(document.getElementById('detail-quote-feedback'), 'Link gekopieerd. Iedereen met deze link kan de offerte bekijken en akkoord geven.', 'success');
+      } catch (error) {
+        window.prompt('Kopieer de link met Ctrl+C:', url);
+      }
+    } catch (error) {
+      note(document.getElementById('detail-quote-feedback'), error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function makeInvoice() {
+    if (!activeQuote) return;
+    const button = document.getElementById('detail-quote-invoice');
+    if (!window.confirm('Offerte ' + activeQuote.number + ' omzetten in een factuur?\n\nDe factuur krijgt vandaag als factuurdatum en dezelfde regels en btw als de offerte.')) return;
+    setBusy(button, true, 'Omzetten…');
+    try {
+      const invoice = await api('/api/quotes/' + activeQuote.id + '/invoice', { method: 'POST', body: {} });
+      window.location.href = 'facturen.html?invoice=' + invoice.id + '&saved=' + encodeURIComponent(invoice.number);
+    } catch (error) {
+      note(document.getElementById('detail-quote-feedback'), error.message, 'error');
+      setBusy(button, false);
+    }
+  }
+
+  async function deleteQuote() {
+    if (!activeQuote) return;
+    const quote = activeQuote;
+    if (!window.confirm('Offerte ' + quote.number + ' verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
+    const button = document.getElementById('detail-quote-delete');
+    setBusy(button, true, 'Verwijderen…');
+    try {
+      await api('/api/quotes/' + quote.id, { method: 'DELETE' });
+      quotes = quotes.filter(item => item.id !== quote.id);
+      activeQuote = null;
+      closeDialog();
+      updateCounts();
+      renderQuotes();
+      note(feedback, 'Offerte ' + quote.number + ' is verwijderd.', 'success');
+    } catch (error) {
+      note(document.getElementById('detail-quote-feedback'), error.message, 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function loadQuotes() {
+    note(feedback, '');
+    summary.textContent = 'Offertes laden…';
+    try {
+      const [quoteData, customers] = await Promise.all([
+        api('/api/quotes'),
+        api('/api/customers')
+      ]);
+      quotes = quoteData;
+      customerNames = new Map(customers.map(customer => [customer.id, customer.name]));
+      updateCounts();
+      renderQuotes();
+
+      const params = new URLSearchParams(window.location.search);
+      const filter = params.get('filter');
+      if (filter && ['all', 'draft', 'sent', 'accepted', 'declined'].includes(filter)) {
+        setFilter(filter);
+        renderQuotes();
+      }
+      const requested = params.get('quote');
+      if (requested) openQuote(requested);
+      const saved = params.get('saved');
+      if (saved) note(feedback, 'Offerte ' + saved + ' is opgeslagen.', 'success');
+      if (params.toString()) {
+        window.history.replaceState({}, '', 'offertes.html');
+      }
+    } catch (error) {
+      note(feedback, error.message, 'error');
+      summary.textContent = 'Offertes tijdelijk niet beschikbaar.';
+      tableBody.innerHTML = '<tr class="empty-row"><td colspan="7">' +
+        emptyState('Kon offertes niet laden', error.message, null, null) + '</td></tr>';
+    }
+  }
+
+  pills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      setFilter(pill.dataset.filter);
+      renderQuotes();
+    });
+  });
+
+  searchInput.addEventListener('input', renderQuotes);
+
+  tableBody.addEventListener('click', event => {
+    const trigger = event.target.closest('[data-view]');
+    if (trigger) openQuote(trigger.dataset.view);
+  });
+
+  document.getElementById('quote-dialog-close').addEventListener('click', closeDialog);
+  document.getElementById('detail-quote-close').addEventListener('click', closeDialog);
+  document.getElementById('detail-quote-send').addEventListener('click', sendQuote);
+  document.getElementById('detail-quote-link').addEventListener('click', copyLink);
+  document.getElementById('detail-quote-invoice').addEventListener('click', makeInvoice);
+  document.getElementById('detail-quote-delete').addEventListener('click', deleteQuote);
+  dialog.addEventListener('click', event => {
+    if (event.target === dialog) closeDialog();
+  });
+
+  Kasflow.ready.then(loadQuotes);
+})();
+</script>
+
+</body>
+</html>

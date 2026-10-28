@@ -60,6 +60,15 @@ verwijderen van een account en de migratie van een oud databaseschema.
   latere wijzigingen een uitgereikte factuur niet veranderen. Facturen die je
   eerder in een ander programma maakte voeg je toe met **Deze factuur heb ik al
   verstuurd**; Kasflow mailt dan niets, maar de btw telt gewoon mee.
+- **Offertes** — voorstel met regels en btw per regel, automatisch offertenummer
+  (`OFF-jaar-nnn`), geldigheidsdatum en toelichting. Je verstuurt hem per e-mail
+  (met de pdf als bijlage) of deelt de link; je klant opent de offerte **zonder
+  account** en klikt **Akkoord** of **Niet akkoord**. Kasflow bewaart wie er
+  reageerde, wanneer en met welke opmerking. Na akkoord zet je de offerte met één
+  klik om in een factuur met dezelfde regels, btw-behandeling en bedragen; een
+  verstuurde offerte pas je niet meer aan, zodat je klant altijd ziet waar hij
+  akkoord op gaf. Offertes tellen niet mee voor de btw-aangifte — pas de factuur
+  die eruit volgt doet dat.
 - **Creditfacturen** — een factuur wordt nooit gewijzigd of verwijderd; je
   crediteert hem volledig met één klik en maakt zo nodig een nieuwe.
 - **Btw-behandelingen** — normaal, btw verlegd (binnenland), intracommunautaire
@@ -161,6 +170,9 @@ offline.html               offlinepagina
 dashboard.html             cijfers, grafiek, openstaande facturen
 facturen.html              facturenlijst, filters, detailvenster, PDF en verzenden
 factuur.html               nieuwe factuur met regels, leverdatum en opmerking
+offertes.html              offertes met status, akkoordlink en omzetten naar factuur
+offerte.html               nieuwe offerte met geldigheidsdatum en regels
+offerte-bekijken.html      publieke akkoordpagina voor de klant (zonder account)
 klanten.html               klanten met adres en openstaand bedrag
 bonnetjes.html             bonnetjes uploaden en bekijken
 btw.html                   btw per kwartaal met goedkeuring
@@ -213,6 +225,11 @@ een nieuwe lettertypefamilie toe te voegen.
   zonder ander box 1-inkomen, eigen woning of fiscale partner. Kasflow dient
   die aangifte niet zelf in.
 - **Bankkoppeling**: er is geen live PSD2-koppeling. Je importeert een afschrift.
+- **Offertelink**: de akkoordpagina werkt met een token in de link. Iedereen met
+  die link kan de offerte zien en akkoord geven, dus behandel hem als een
+  wachtwoord. Na akkoord, afwijzing of omzetting naar een factuur is reageren niet
+  meer mogelijk; de eigenaar kan de link niet intrekken maar ook niets meer
+  wijzigen wat de klant zag.
 - **OCR**: bonnetjes worden bewaard maar niet automatisch uitgelezen.
 - **E-facturatie**: B2B e-invoicing is in Nederland nog niet verplicht (het
   kabinet mikt op 1 juli 2030); factuurgegevens zijn er wel op voorbereid.

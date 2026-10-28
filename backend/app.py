@@ -152,6 +152,8 @@ PROTECTED_PAGES = {
     "dashboard.html",
     "facturen.html",
     "factuur.html",
+    "offertes.html",
+    "offerte.html",
     "bonnetjes.html",
     "btw.html",
     "bank.html",
@@ -352,6 +354,61 @@ class InvoiceLine(Base):
     net_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     vat_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     invoice: Mapped[Invoice] = relationship(back_populates="lines")
+
+
+class Quote(Base):
+    """Offerte die de klant online kan goedkeuren.
+
+    Een offerte is geen factuur: er gaat geen btw-aangifte van uit. Daarom staat
+    hij in een eigen tabel met een eigen nummerreeks. De publieke link is een
+    bearer-token: iedereen met de link kan de offerte zien en goedkeuren, dus de
+    token staat los van het account en kan opnieuw worden verstuurd.
+    """
+
+    __tablename__ = "quotes"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_quotes_company_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), nullable=False)
+    number: Mapped[str] = mapped_column(String(50), nullable=False)
+    quote_date: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date] = mapped_column(Date, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    # draft, sent, viewed, accepted, declined, invoiced
+    status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
+    subtotal_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    vat_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    vat_treatment: Mapped[str] = mapped_column(String(20), default="standard", nullable=False)
+    supplier_snapshot: Mapped[str | None] = mapped_column(Text)
+    customer_snapshot: Mapped[str | None] = mapped_column(Text)
+    public_token: Mapped[str | None] = mapped_column(String(64), unique=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    response_name: Mapped[str | None] = mapped_column(String(200))
+    response_note: Mapped[str | None] = mapped_column(Text)
+    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"))
+    lines: Mapped[list[QuoteLine]] = relationship(
+        back_populates="quote", cascade="all, delete-orphan"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class QuoteLine(Base):
+    __tablename__ = "quote_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    quote_id: Mapped[int] = mapped_column(ForeignKey("quotes.id"), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    unit_price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    vat_rate_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    net_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    vat_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    quote: Mapped[Quote] = relationship(back_populates="lines")
 
 
 class Receipt(Base):
@@ -871,6 +928,89 @@ class SendInvoiceOutput(BaseModel):
     mode: str
     to: str
     sent_at: datetime | None
+
+
+class QuoteInput(BaseModel):
+    customer_id: int = Field(gt=0)
+    quote_date: date
+    valid_until: date
+    note: Annotated[str | None, Field(max_length=1000)] = None
+    vat_treatment: Literal["standard", "reverse_charge", "intra_eu", "export"] = "standard"
+    lines: Annotated[list[InvoiceLineInput], Field(min_length=1, max_length=100)]
+
+    @field_validator("note")
+    @classmethod
+    def strip_note(cls, value: str | None) -> str | None:
+        return clean_optional(value)
+
+    @field_validator("valid_until")
+    @classmethod
+    def valid_until_not_before_quote(cls, value: date, info) -> date:
+        quote_date = info.data.get("quote_date")
+        if quote_date and value < quote_date:
+            raise ValueError("De geldigheidsdatum mag niet voor de offertedatum liggen")
+        return value
+
+
+class QuoteOutput(BaseModel):
+    id: int
+    customer_id: int
+    number: str
+    quote_date: date
+    valid_until: date
+    note: str | None
+    status: str
+    subtotal_cents: int
+    vat_cents: int
+    total_cents: int
+    vat_treatment: str
+    sent_at: datetime | None
+    viewed_at: datetime | None
+    responded_at: datetime | None
+    response_name: str | None
+    response_note: str | None
+    invoice_id: int | None
+    invoice_number: str | None
+    expired: bool
+    public_url: str | None
+    lines: list[InvoiceLineOutput]
+
+
+class PublicQuoteOutput(BaseModel):
+    """Wat een klant zonder account te zien krijgt op de akkoordpagina."""
+
+    number: str
+    quote_date: date
+    valid_until: date
+    note: str | None
+    status: str
+    subtotal_cents: int
+    vat_cents: int
+    total_cents: int
+    vat_notice: str
+    supplier: dict[str, str]
+    customer_name: str
+    contact_person: str
+    lines: list[InvoiceLineOutput]
+    expired: bool
+    can_respond: bool
+    responded_at: datetime | None
+    response_name: str | None
+
+
+class QuoteResponseInput(BaseModel):
+    name: Annotated[str, Field(min_length=2, max_length=200)]
+    note: Annotated[str | None, Field(max_length=1000)] = None
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("note")
+    @classmethod
+    def strip_note(cls, value: str | None) -> str | None:
+        return clean_optional(value)
 
 
 class VatRateOutput(BaseModel):
@@ -1539,6 +1679,16 @@ def create_app(
             raise HTTPException(status_code=404, detail="Factuur niet gevonden")
         return invoice
 
+    def get_owned_quote(session: Session, user: User, quote_id: int) -> Quote:
+        quote = session.scalar(
+            select(Quote)
+            .options(selectinload(Quote.lines))
+            .where(Quote.id == quote_id, Quote.company_id == tenant_id(user))
+        )
+        if quote is None:
+            raise HTTPException(status_code=404, detail="Offerte niet gevonden")
+        return quote
+
     def user_output(user: User, session: Session | None = None) -> dict:
         company = getattr(user, "_company", None)
         role = getattr(user, "_role", "owner")
@@ -1716,6 +1866,149 @@ def create_app(
             if suffix.isdigit():
                 highest = max(highest, int(suffix))
         return f"{base}{highest + 1:03d}"
+
+    def quote_expired(quote: Quote) -> bool:
+        """Alleen een offerte waar nog op gereageerd kan worden, kan verlopen."""
+        return quote.valid_until < date.today() and quote.status in {"draft", "sent", "viewed"}
+
+    def quote_public_url(quote: Quote) -> str | None:
+        if not quote.public_token:
+            return None
+        return f"{settings.public_url.rstrip('/')}/offerte-bekijken.html?t={quote.public_token}"
+
+    def next_quote_number(session: Session, user: User) -> str:
+        base = f"OFF-{date.today().year}-"
+        numbers = session.scalars(
+            select(Quote.number).where(
+                Quote.company_id == tenant_id(user), Quote.number.like(f"{base}%")
+            )
+        ).all()
+        highest = 0
+        for number in numbers:
+            suffix = number[len(base) :]
+            if suffix.isdigit():
+                highest = max(highest, int(suffix))
+        return f"{base}{highest + 1:03d}"
+
+    def quote_output(session: Session, quote: Quote) -> QuoteOutput:
+        invoice_number = None
+        if quote.invoice_id:
+            invoice_number = session.scalar(
+                select(Invoice.number).where(Invoice.id == quote.invoice_id)
+            )
+        return QuoteOutput(
+            id=quote.id,
+            customer_id=quote.customer_id,
+            number=quote.number,
+            quote_date=quote.quote_date,
+            valid_until=quote.valid_until,
+            note=quote.note,
+            status=quote.status,
+            subtotal_cents=quote.subtotal_cents,
+            vat_cents=quote.vat_cents,
+            total_cents=quote.total_cents,
+            vat_treatment=quote.vat_treatment,
+            sent_at=quote.sent_at,
+            viewed_at=quote.viewed_at,
+            responded_at=quote.responded_at,
+            response_name=quote.response_name,
+            response_note=quote.response_note,
+            invoice_id=quote.invoice_id,
+            invoice_number=invoice_number,
+            expired=quote_expired(quote),
+            public_url=quote_public_url(quote),
+            lines=[InvoiceLineOutput.model_validate(line) for line in quote.lines],
+        )
+
+    def quote_parties(quote: Quote, user: User, customer: Customer) -> tuple[dict, dict]:
+        supplier = (
+            json.loads(quote.supplier_snapshot) if quote.supplier_snapshot else supplier_details(user)
+        )
+        recipient = (
+            json.loads(quote.customer_snapshot)
+            if quote.customer_snapshot
+            else customer_details(customer)
+        )
+        return supplier, recipient
+
+    def quote_pdf_bytes(user: User, customer: Customer, quote: Quote) -> bytes:
+        supplier_data, customer_data = quote_parties(quote, user, customer)
+        return build_invoice_pdf(
+            InvoicePdfData(
+                invoice_number=quote.number,
+                invoice_date=quote.quote_date,
+                due_date=quote.valid_until,
+                delivery_date=None,
+                payment_term_days=0,
+                supplier=Party(**supplier_data),
+                customer=Party(**customer_data),
+                lines=[
+                    InvoiceLineData(
+                        description=line.description,
+                        quantity=line.quantity,
+                        unit_price_cents=line.unit_price_cents,
+                        vat_rate_bps=line.vat_rate_bps,
+                        net_cents=line.net_cents,
+                        vat_cents=line.vat_cents,
+                    )
+                    for line in quote.lines
+                ],
+                subtotal_cents=quote.subtotal_cents,
+                vat_cents=quote.vat_cents,
+                total_cents=quote.total_cents,
+                note=quote.note or "",
+                vat_notice=VAT_TREATMENT_NOTICES.get(quote.vat_treatment, ""),
+                quote=True,
+                valid_until=quote.valid_until,
+            )
+        )
+
+    def public_quote_output(quote: Quote) -> PublicQuoteOutput:
+        supplier = json.loads(quote.supplier_snapshot) if quote.supplier_snapshot else {}
+        recipient = json.loads(quote.customer_snapshot) if quote.customer_snapshot else {}
+        expired = quote_expired(quote)
+        return PublicQuoteOutput(
+            number=quote.number,
+            quote_date=quote.quote_date,
+            valid_until=quote.valid_until,
+            note=quote.note,
+            status=quote.status,
+            subtotal_cents=quote.subtotal_cents,
+            vat_cents=quote.vat_cents,
+            total_cents=quote.total_cents,
+            vat_notice=VAT_TREATMENT_NOTICES.get(quote.vat_treatment, ""),
+            supplier=supplier,
+            customer_name=recipient.get("name", ""),
+            contact_person=recipient.get("contact", ""),
+            lines=[InvoiceLineOutput.model_validate(line) for line in quote.lines],
+            expired=expired,
+            can_respond=quote.status in {"sent", "viewed"} and not expired,
+            responded_at=quote.responded_at,
+            response_name=quote.response_name,
+        )
+
+    def quote_lines_payload(lines) -> tuple[list[QuoteLine], int, int]:
+        """Zelfde afronding als een factuur: per regel, in centen."""
+        stored: list[QuoteLine] = []
+        subtotal_cents = 0
+        vat_cents = 0
+        for line in lines:
+            net = line.quantity * line.unit_price
+            line_net_cents = to_cents(net)
+            line_vat_cents = to_cents(net * line.vat_rate)
+            subtotal_cents += line_net_cents
+            vat_cents += line_vat_cents
+            stored.append(
+                QuoteLine(
+                    description=line.description,
+                    quantity=line.quantity,
+                    unit_price_cents=to_cents(line.unit_price),
+                    vat_rate_bps=int(line.vat_rate * 10_000),
+                    net_cents=line_net_cents,
+                    vat_cents=line_vat_cents,
+                )
+            )
+        return stored, subtotal_cents, vat_cents
 
     def deductible_vat(receipt: Receipt, user: User) -> int:
         """VAT on a purchase that may be deducted as voorbelasting (rubric 5b)."""
@@ -3052,6 +3345,458 @@ def create_app(
         )
         session.commit()
         return get_owned_invoice(session, user, invoice_id)
+
+    # -- Quotes -----------------------------------------------------------
+
+    def public_quote_or_404(session: Session, token: str) -> Quote:
+        quote = session.scalar(
+            select(Quote)
+            .options(selectinload(Quote.lines))
+            .where(Quote.public_token == token)
+        )
+        if quote is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Deze offerte bestaat niet (meer) of de link is ingetrokken.",
+            )
+        return quote
+
+    @app.get("/api/quotes", response_model=list[QuoteOutput])
+    def list_quotes(
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        quotes = session.scalars(
+            select(Quote)
+            .options(selectinload(Quote.lines))
+            .where(Quote.company_id == tenant_id(user))
+            .order_by(Quote.quote_date.desc(), Quote.id.desc())
+        ).all()
+        return [quote_output(session, quote) for quote in quotes]
+
+    @app.get("/api/quotes/next-number")
+    def next_quote(
+        session: Session = Depends(get_session), user: User = Depends(get_current_user)
+    ) -> dict[str, str]:
+        return {"number": next_quote_number(session, user)}
+
+    @app.get("/api/quotes/public/{token}", response_model=PublicQuoteOutput)
+    def public_quote(
+        token: str, session: Session = Depends(get_session)
+    ):
+        """De akkoordpagina. Geen account nodig: de token in de link is het bewijs."""
+        quote = public_quote_or_404(session, token)
+        if quote.status == "sent" and quote.viewed_at is None:
+            quote.viewed_at = utcnow()
+            session.commit()
+        return public_quote_output(quote)
+
+    @app.post("/api/quotes/public/{token}/accept", response_model=PublicQuoteOutput)
+    def accept_quote(
+        token: str,
+        payload: QuoteResponseInput,
+        request: Request,
+        session: Session = Depends(get_session),
+    ):
+        enforce(request, "quote-response", 30, 3600, token)
+        quote = public_quote_or_404(session, token)
+        if quote.status == "accepted":
+            # Twee keer klikken (of een refresh) mag geen fout geven.
+            return public_quote_output(quote)
+        if quote.invoice_id or quote.status == "invoiced":
+            raise HTTPException(
+                status_code=409,
+                detail="Deze offerte is al omgezet in een factuur. Je hoeft niets meer te doen.",
+            )
+        if quote.status == "declined":
+            raise HTTPException(
+                status_code=409,
+                detail="Deze offerte is eerder afgewezen. Neem contact op met de afzender als je toch akkoord wilt.",
+            )
+        if quote.status not in {"sent", "viewed"}:
+            raise HTTPException(
+                status_code=409,
+                detail="Deze offerte is nog niet verstuurd. Vraag de afzender om hem te versturen.",
+            )
+        if quote_expired(quote):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Deze offerte is verlopen op "
+                    f"{quote.valid_until.strftime('%d-%m-%Y')}. Vraag een nieuwe offerte aan."
+                ),
+            )
+        quote.status = "accepted"
+        quote.responded_at = utcnow()
+        quote.response_name = payload.name
+        quote.response_note = payload.note
+        audit(
+            session,
+            quote.owner_id,
+            "quote.accept",
+            f"{quote.number} akkoord door {payload.name}",
+            client_ip(request),
+        )
+        session.commit()
+        return public_quote_output(quote)
+
+    @app.post("/api/quotes/public/{token}/decline", response_model=PublicQuoteOutput)
+    def decline_quote(
+        token: str,
+        payload: QuoteResponseInput,
+        request: Request,
+        session: Session = Depends(get_session),
+    ):
+        enforce(request, "quote-response", 30, 3600, token)
+        quote = public_quote_or_404(session, token)
+        if quote.status == "declined":
+            return public_quote_output(quote)
+        if quote.status in {"accepted", "invoiced"} or quote.invoice_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Deze offerte is al geaccepteerd. Neem contact op met de afzender als je wilt afzien.",
+            )
+        quote.status = "declined"
+        quote.responded_at = utcnow()
+        quote.response_name = payload.name
+        quote.response_note = payload.note
+        audit(
+            session,
+            quote.owner_id,
+            "quote.decline",
+            f"{quote.number} afgewezen door {payload.name}",
+            client_ip(request),
+        )
+        session.commit()
+        return public_quote_output(quote)
+
+    @app.post("/api/quotes", response_model=QuoteOutput, status_code=status.HTTP_201_CREATED)
+    def create_quote(
+        payload: QuoteInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        customer = session.get(Customer, payload.customer_id)
+        if customer is None or customer.company_id != tenant_id(user):
+            raise HTTPException(status_code=404, detail="Klant niet gevonden")
+        supplier = supplier_details(user)
+        if not (supplier["street"] and supplier["postal_code"] and supplier["city"]):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Vul eerst je bedrijfsadres in bij Instellingen. "
+                    "Zonder adres is de offerte niet bruikbaar voor je klant."
+                ),
+            )
+        company = getattr(user, "_company", None)
+        scheme = company.vat_scheme if company is not None else user.vat_scheme
+        treatment = "kor" if scheme == "kor" else payload.vat_treatment
+        if treatment != "standard" and any(line.vat_rate != 0 for line in payload.lines):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Bij {VAT_TREATMENT_LABELS[treatment]} is het btw-tarief op elke regel 0%.",
+            )
+        stored_lines, subtotal_cents, vat_cents = quote_lines_payload(payload.lines)
+        quote = Quote(
+            owner_id=user.id,
+            company_id=tenant_id(user),
+            customer_id=payload.customer_id,
+            number=next_quote_number(session, user),
+            quote_date=payload.quote_date,
+            valid_until=payload.valid_until,
+            note=payload.note,
+            status="draft",
+            subtotal_cents=subtotal_cents,
+            vat_cents=vat_cents,
+            total_cents=subtotal_cents + vat_cents,
+            vat_treatment=treatment,
+            supplier_snapshot=json.dumps(supplier, ensure_ascii=False),
+            customer_snapshot=json.dumps(customer_details(customer), ensure_ascii=False),
+            lines=stored_lines,
+        )
+        session.add(quote)
+        try:
+            session.commit()
+        except IntegrityError as error:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Offertenummer bestaat al") from error
+        audit(session, user.id, "quote.create", quote.number, client_ip(request))
+        session.commit()
+        return quote_output(session, get_owned_quote(session, user, quote.id))
+
+    @app.get("/api/quotes/{quote_id}", response_model=QuoteOutput)
+    def get_quote(
+        quote_id: int,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        return quote_output(session, get_owned_quote(session, user, quote_id))
+
+    @app.patch("/api/quotes/{quote_id}", response_model=QuoteOutput)
+    def update_quote(
+        quote_id: int,
+        payload: QuoteInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        quote = get_owned_quote(session, user, quote_id)
+        if quote.status != "draft":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Deze offerte is al verstuurd. Pas hem niet meer aan, maar maak een nieuwe offerte "
+                    "zodat je klant altijd ziet waar hij akkoord op gaf."
+                ),
+            )
+        customer = session.get(Customer, payload.customer_id)
+        if customer is None or customer.company_id != tenant_id(user):
+            raise HTTPException(status_code=404, detail="Klant niet gevonden")
+        company = getattr(user, "_company", None)
+        scheme = company.vat_scheme if company is not None else user.vat_scheme
+        treatment = "kor" if scheme == "kor" else payload.vat_treatment
+        if treatment != "standard" and any(line.vat_rate != 0 for line in payload.lines):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Bij {VAT_TREATMENT_LABELS[treatment]} is het btw-tarief op elke regel 0%.",
+            )
+        stored_lines, subtotal_cents, vat_cents = quote_lines_payload(payload.lines)
+        quote.customer_id = payload.customer_id
+        quote.quote_date = payload.quote_date
+        quote.valid_until = payload.valid_until
+        quote.note = payload.note
+        quote.vat_treatment = treatment
+        quote.subtotal_cents = subtotal_cents
+        quote.vat_cents = vat_cents
+        quote.total_cents = subtotal_cents + vat_cents
+        quote.customer_snapshot = json.dumps(customer_details(customer), ensure_ascii=False)
+        quote.lines = stored_lines
+        audit(session, user.id, "quote.update", quote.number, client_ip(request))
+        session.commit()
+        return quote_output(session, get_owned_quote(session, user, quote.id))
+
+    @app.delete("/api/quotes/{quote_id}", status_code=204)
+    def delete_quote(
+        quote_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        quote = get_owned_quote(session, user, quote_id)
+        if quote.invoice_id or quote.status in {"accepted", "invoiced"}:
+            raise HTTPException(
+                status_code=409,
+                detail="Deze offerte is geaccepteerd. Bewaar hem als bewijs; je kunt hem niet verwijderen.",
+            )
+        number = quote.number
+        session.delete(quote)
+        audit(session, user.id, "quote.delete", number, client_ip(request))
+        session.commit()
+
+    @app.get("/api/quotes/{quote_id}/pdf")
+    def quote_pdf(
+        quote_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        enforce(request, "quote-pdf", 60, 3600, str(user.id))
+        quote = get_owned_quote(session, user, quote_id)
+        customer = session.get(Customer, quote.customer_id)
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Klant niet gevonden")
+        pdf = quote_pdf_bytes(user, customer, quote)
+        audit(session, user.id, "quote.pdf", quote.number, client_ip(request))
+        session.commit()
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="offerte-{safe_filename(quote.number)}.pdf"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.post("/api/quotes/{quote_id}/send", response_model=SendInvoiceOutput)
+    def send_quote(
+        quote_id: int,
+        payload: SendInvoiceInput,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        enforce(request, "quote-send", 30, 3600, str(user.id))
+        quote = get_owned_quote(session, user, quote_id)
+        if quote.invoice_id:
+            raise HTTPException(
+                status_code=409, detail="Deze offerte is al omgezet in een factuur."
+            )
+        customer = session.get(Customer, quote.customer_id)
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Klant niet gevonden")
+        recipient = (payload.to or customer.email or "").strip()
+        if "@" not in recipient:
+            raise HTTPException(
+                status_code=422,
+                detail="Deze klant heeft geen e-mailadres. Vul een ontvanger in of bewerk de klant.",
+            )
+        if payload.to:
+            customer.email = recipient
+        if not quote.public_token:
+            quote.public_token = secrets.token_urlsafe(24)
+        pdf = quote_pdf_bytes(user, customer, quote)
+        sent = mailer.send_quote(
+            sender_name=(
+                getattr(user, "_company", None).name
+                if getattr(user, "_company", None)
+                else user.company_name
+            ),
+            customer_name=customer.name,
+            customer_email=recipient,
+            quote_number=quote.number,
+            total_cents=quote.total_cents,
+            valid_until=quote.valid_until.strftime("%d-%m-%Y"),
+            note=payload.message or quote.note or "",
+            accept_url=quote_public_url(quote) or "",
+            pdf_bytes=pdf,
+            pdf_filename=f"offerte-{safe_filename(quote.number)}.pdf",
+        )
+        if not sent:
+            raise HTTPException(
+                status_code=502,
+                detail="De e-mail kon niet worden verstuurd. Controleer de SMTP-instellingen en probeer het opnieuw.",
+            )
+        quote.sent_at = utcnow()
+        if quote.status == "draft":
+            quote.status = "sent"
+        audit(session, user.id, "quote.send", f"{quote.number} → {recipient}", client_ip(request))
+        session.commit()
+        return SendInvoiceOutput(
+            sent=True,
+            mode="smtp" if mailer.configured else "log",
+            to=recipient,
+            sent_at=quote.sent_at,
+        )
+
+    @app.post("/api/quotes/{quote_id}/link")
+    def share_quote(
+        quote_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ) -> dict[str, str]:
+        """Zonder e-mail versturen: de link zelf doorsturen (WhatsApp, eigen mail).
+
+        De offerte gaat hiermee van concept naar verstuurd, want de klant kan de
+        link nu openen en goedkeuren.
+        """
+        enforce(request, "quote-send", 30, 3600, str(user.id))
+        quote = get_owned_quote(session, user, quote_id)
+        if quote.invoice_id:
+            raise HTTPException(
+                status_code=409, detail="Deze offerte is al omgezet in een factuur."
+            )
+        if not quote.public_token:
+            quote.public_token = secrets.token_urlsafe(24)
+        if quote.status == "draft":
+            quote.status = "sent"
+        audit(session, user.id, "quote.link", quote.number, client_ip(request))
+        session.commit()
+        return {"url": quote_public_url(quote) or ""}
+
+    @app.post(
+        "/api/quotes/{quote_id}/invoice",
+        response_model=InvoiceOutput,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def quote_to_invoice(
+        quote_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        user: User = Depends(get_current_user),
+    ):
+        quote = get_owned_quote(session, user, quote_id)
+        if quote.invoice_id:
+            existing = session.scalar(
+                select(Invoice.number).where(Invoice.id == quote.invoice_id)
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"Deze offerte is al omgezet in factuur {existing or ''}".strip() + ".",
+            )
+        if quote.status != "accepted":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Alleen een geaccepteerde offerte wordt een factuur. "
+                    "De klant heeft nog niet op akkoord geklikt."
+                ),
+            )
+        customer = session.get(Customer, quote.customer_id)
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Klant niet gevonden")
+        company = getattr(user, "_company", None)
+        payment_days = company.payment_term_days if company is not None else user.payment_term_days
+        invoice_date = date.today()
+        supplier = supplier_details(user)
+        recipient = customer_details(customer)
+        missing = missing_invoice_fields(supplier, recipient, quote.vat_treatment)
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Een factuur moet deze gegevens bevatten: " + ", ".join(missing) + ". "
+                    "Vul ze aan bij Instellingen of Klanten en probeer het opnieuw."
+                ),
+            )
+        ensure_quarter_open(session, user, invoice_date)
+        invoice = Invoice(
+            owner_id=user.id,
+            company_id=tenant_id(user),
+            customer_id=quote.customer_id,
+            number=next_invoice_number(session, user),
+            invoice_date=invoice_date,
+            due_date=invoice_date + timedelta(days=payment_days),
+            delivery_date=None,
+            note=quote.note,
+            status="pending",
+            subtotal_cents=quote.subtotal_cents,
+            vat_cents=quote.vat_cents,
+            total_cents=quote.total_cents,
+            vat_treatment=quote.vat_treatment,
+            supplier_snapshot=json.dumps(supplier, ensure_ascii=False),
+            customer_snapshot=json.dumps(recipient, ensure_ascii=False),
+            lines=[
+                InvoiceLine(
+                    description=line.description,
+                    quantity=line.quantity,
+                    unit_price_cents=line.unit_price_cents,
+                    vat_rate_bps=line.vat_rate_bps,
+                    net_cents=line.net_cents,
+                    vat_cents=line.vat_cents,
+                )
+                for line in quote.lines
+            ],
+        )
+        session.add(invoice)
+        session.flush()
+        quote.invoice_id = invoice.id
+        quote.status = "invoiced"
+        try:
+            session.commit()
+        except IntegrityError as error:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Factuurnummer bestaat al") from error
+        audit(
+            session,
+            user.id,
+            "quote.invoice",
+            f"{quote.number} → factuur {invoice.number}",
+            client_ip(request),
+        )
+        session.commit()
+        return get_owned_invoice(session, user, invoice.id)
 
     # -- VAT --------------------------------------------------------------
 

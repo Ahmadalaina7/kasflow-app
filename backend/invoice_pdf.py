@@ -124,6 +124,10 @@ class InvoicePdfData:
     credited_number: str = ""
     credited_date: date | None = None
     vat_notice: str = ""
+    # Een offerte gebruikt hetzelfde papier als een factuur, maar zonder
+    # betaalopdracht: er staat een geldigheidsdatum en een akkoordverzoek in.
+    quote: bool = False
+    valid_until: date | None = None
 
 
 def _styles() -> dict[str, ParagraphStyle]:
@@ -163,6 +167,7 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
         lines=[replace(line, description=escape(line.description)) for line in data.lines],
         missing_fields=[escape(item) for item in data.missing_fields],
     )
+    label = "Offerte" if data.quote else ("Creditfactuur" if data.credit else "Factuur")
     buffer = BytesIO()
     document = SimpleDocTemplate(
         buffer,
@@ -171,9 +176,9 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
         rightMargin=20 * mm,
         topMargin=18 * mm,
         bottomMargin=18 * mm,
-        title=f"{'Creditfactuur' if data.credit else 'Factuur'} {data.invoice_number}",
+        title=f"{label} {data.invoice_number}",
         author=data.supplier.name,
-        subject=f"{'Creditfactuur' if data.credit else 'Factuur'} {data.invoice_number}",
+        subject=f"{label} {data.invoice_number}",
         # Keep the text streams readable: invoice PDFs stay small and the
         # contents can be checked without a separate text-extraction step.
         pageCompression=0,
@@ -204,15 +209,25 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
         "<br/>".join(line for line in supplier_lines if line), styles["small"]
     )
 
-    meta_rows = [
-        [Paragraph("FACTUURNUMMER", styles["label"]), Paragraph(data.invoice_number, styles["body"])],
-        [Paragraph("FACTUURDATUM", styles["label"]), Paragraph(dutch_date(data.invoice_date), styles["body"])],
-        [
-            Paragraph("LEVERDATUM", styles["label"]),
-            Paragraph(dutch_date(data.delivery_date or data.invoice_date), styles["body"]),
-        ],
-        [Paragraph("VERVALDATUM", styles["label"]), Paragraph(dutch_date(data.due_date), styles["body"])],
-    ]
+    if data.quote:
+        meta_rows = [
+            [Paragraph("OFFERTENUMMER", styles["label"]), Paragraph(data.invoice_number, styles["body"])],
+            [Paragraph("OFFERTEDATUM", styles["label"]), Paragraph(dutch_date(data.invoice_date), styles["body"])],
+            [
+                Paragraph("GELDIG TOT", styles["label"]),
+                Paragraph(dutch_date(data.valid_until), styles["body"]),
+            ],
+        ]
+    else:
+        meta_rows = [
+            [Paragraph("FACTUURNUMMER", styles["label"]), Paragraph(data.invoice_number, styles["body"])],
+            [Paragraph("FACTUURDATUM", styles["label"]), Paragraph(dutch_date(data.invoice_date), styles["body"])],
+            [
+                Paragraph("LEVERDATUM", styles["label"]),
+                Paragraph(dutch_date(data.delivery_date or data.invoice_date), styles["body"]),
+            ],
+            [Paragraph("VERVALDATUM", styles["label"]), Paragraph(dutch_date(data.due_date), styles["body"])],
+        ]
     meta_table = Table(meta_rows, colWidths=[32 * mm, 30 * mm])
     meta_table.setStyle(
         TableStyle(
@@ -226,7 +241,7 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
     )
 
     header = Table(
-        [[supplier_block, Table([[Paragraph("CREDITFACTUUR" if data.credit else "FACTUUR", styles["title"])]], style=TableStyle([
+        [[supplier_block, Table([[Paragraph(label.upper(), styles["title"])]], style=TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
@@ -246,7 +261,7 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
     story.append(Spacer(1, 10 * mm))
 
     customer_lines = [
-        "<b>Factuuradres</b>",
+        "<b>Offerte voor</b>" if data.quote else "<b>Factuuradres</b>",
         data.customer.name,
     ]
     if data.customer.contact:
@@ -332,7 +347,9 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
         )
     totals_rows.append(
         [
-            Paragraph("<b>Totaal te betalen</b>", styles["cellRight"]),
+            Paragraph(
+                "<b>Totaal</b>" if data.quote else "<b>Totaal te betalen</b>", styles["cellRight"]
+            ),
             Paragraph(f"<b>{money(data.total_cents)}</b>", styles["cellRight"]),
         ]
     )
@@ -353,7 +370,13 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
     story.append(totals_table)
     story.append(Spacer(1, 8 * mm))
 
-    if data.credit:
+    if data.quote:
+        payment_lines = [
+            f"<b>Deze offerte is geldig tot {dutch_date(data.valid_until)}.</b> "
+            "Akkoord geven kan met de knop in de e-mail die je van ons kreeg. "
+            "Daarna nemen we contact op om het werk in te plannen en volgt de factuur.",
+        ]
+    elif data.credit:
         payment_lines = [
             f"<b>Creditering van factuur {data.credited_number} van {dutch_date(data.credited_date)}.</b> "
             f"Het bedrag van {money(-data.total_cents)} verrekenen we met die factuur, "
@@ -399,9 +422,13 @@ def build_invoice_pdf(data: InvoicePdfData) -> bytes:
                     "<br/>".join(line for line in legal_lines if line), styles["small"]
                 ),
                 Paragraph(
-                    "Deze factuur is opgemaakt met Kasflow."
-                    if data.missing_fields
-                    else "Deze factuur is opgemaakt met Kasflow en voldoet aan de factuureisen van de Belastingdienst.",
+                    "Deze offerte is opgemaakt met Kasflow."
+                    if data.quote
+                    else (
+                        "Deze factuur is opgemaakt met Kasflow."
+                        if data.missing_fields
+                        else "Deze factuur is opgemaakt met Kasflow en voldoet aan de factuureisen van de Belastingdienst."
+                    ),
                     styles["small"],
                 ),
             ]

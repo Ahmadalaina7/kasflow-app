@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0A1830">
+<title>Kasflow — Offerte bekijken</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/jakarta-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body>
+
+<div class="auth-shell single">
+  <div class="auth-form-wrap">
+    <div class="quote-public" id="quote-root">
+      <p class="auth-note" id="quote-loading">Offerte laden…</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const root = document.getElementById('quote-root');
+  const token = new URLSearchParams(window.location.search).get('t') || '';
+  const STATUS_LABELS = {
+    draft: 'Concept',
+    sent: 'Verstuurd',
+    accepted: 'Akkoord',
+    declined: 'Afgewezen',
+    invoiced: 'Gefactureerd',
+    expired: 'Verlopen'
+  };
+
+  const moneyFormatter = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' });
+  const dateFormatter = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  function money(cents) {
+    return moneyFormatter.format((Number(cents) || 0) / 100);
+  }
+
+  function date(value) {
+    if (!value) return '—';
+    return dateFormatter.format(new Date(String(value).slice(0, 10) + 'T00:00:00'));
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[character]);
+  }
+
+  function statusOf(quote) {
+    if (quote.status === 'invoiced') return 'invoiced';
+    if (quote.status === 'accepted') return 'accepted';
+    if (quote.status === 'declined') return 'declined';
+    if (quote.expired) return 'expired';
+    if (quote.status === 'sent' || quote.status === 'viewed') return 'sent';
+    return 'draft';
+  }
+
+  function badge(quote) {
+    const status = statusOf(quote);
+    return '<span class="badge ' + status + '"><span class="dot" aria-hidden="true"></span>' +
+      STATUS_LABELS[status] + '</span>';
+  }
+
+  function supplierBlock(supplier) {
+    const lines = [supplier.name || ''];
+    if (supplier.street) lines.push(supplier.street);
+    const postalCity = [supplier.postal_code, supplier.city].filter(Boolean).join(' ');
+    if (postalCity) lines.push(postalCity);
+    if (supplier.country && !['nederland', 'nl'].includes(String(supplier.country).toLowerCase())) {
+      lines.push(supplier.country);
+    }
+    if (supplier.kvk_number) lines.push('KVK ' + supplier.kvk_number);
+    if (supplier.vat_number) lines.push('Btw-id ' + supplier.vat_number);
+    if (supplier.email) lines.push(supplier.email);
+    if (supplier.phone) lines.push(supplier.phone);
+    return lines.filter(Boolean).map(escapeHtml).join('<br>');
+  }
+
+  function totalsHtml(quote) {
+    const rates = new Map();
+    quote.lines.forEach(line => {
+      const bucket = rates.get(line.vat_rate_bps) || { net: 0, vat: 0 };
+      bucket.net += line.net_cents;
+      bucket.vat += line.vat_cents;
+      rates.set(line.vat_rate_bps, bucket);
+    });
+    const rows = [...rates.entries()].sort((a, b) => b[0] - a[0]).map(([bps, bucket]) =>
+      '<div class="summary-row"><span>Btw ' + (bps / 100).toLocaleString('nl-NL') + '% over ' +
+      money(bucket.net) + '</span><strong>' + money(bucket.vat) + '</strong></div>'
+    ).join('');
+    return '<div class="summary-card">' +
+      '<div class="summary-row"><span>Subtotaal excl. btw</span><strong>' + money(quote.subtotal_cents) + '</strong></div>' +
+      rows +
+      '<div class="summary-row total"><span>Totaal</span><strong>' + money(quote.total_cents) + '</strong></div>' +
+      '</div>';
+  }
+
+  function linesHtml(quote) {
+    return '<div class="table-wrap"><table class="quote-lines">' +
+      '<thead><tr><th>Omschrijving</th><th style="text-align:right">Aantal</th>' +
+      '<th style="text-align:right">Prijs</th><th style="text-align:right">Btw</th>' +
+      '<th style="text-align:right">Bedrag</th></tr></thead><tbody>' +
+      quote.lines.map(line =>
+        '<tr>' +
+        // Op een telefoon vallen aantal en prijs weg; deze regel houdt ze
+        // leesbaar zonder dat de klant een lege kolom ziet.
+        '<td><span class="quote-qty">' +
+        Number(line.quantity).toLocaleString('nl-NL', { maximumFractionDigits: 3 }) +
+        ' × ' + money(line.unit_price_cents) + ' · ' +
+        (line.vat_rate_bps / 100).toLocaleString('nl-NL', { maximumFractionDigits: 2 }) +
+        '% btw</span>' + escapeHtml(line.description) + '</td>' +
+        '<td class="num">' + Number(line.quantity).toLocaleString('nl-NL', { maximumFractionDigits: 3 }) + '</td>' +
+        '<td class="num">' + money(line.unit_price_cents) + '</td>' +
+        '<td class="num">' + (line.vat_rate_bps / 100).toLocaleString('nl-NL', { maximumFractionDigits: 2 }) + '%</td>' +
+        '<td class="num">' + money(line.net_cents) + '</td>' +
+        '</tr>'
+      ).join('') +
+      '</tbody></table></div>';
+  }
+
+  function messagePanel(kind, title, body) {
+    return '<div class="alert' + (kind === 'error' ? ' danger' : '') + '" role="status">' +
+      '<div><strong>' + escapeHtml(title) + '</strong> ' + body + '</div></div>';
+  }
+
+  function responsePanel(quote) {
+    const status = statusOf(quote);
+    if (status === 'accepted') {
+      return messagePanel('success', 'Akkoord gegeven.',
+        'Je gaf op ' + date(quote.responded_at) + ' akkoord' +
+        (quote.response_name ? ' als ' + escapeHtml(quote.response_name) : '') +
+        '. Je hoeft niets meer te doen; de afzender neemt contact op over de uitvoering.');
+    }
+    if (status === 'declined') {
+      return messagePanel('error', 'Offerte afgewezen.',
+        'Je gaf op ' + date(quote.responded_at) + ' aan niet akkoord te gaan. ' +
+        'Wil je toch iets aanpassen? Neem dan contact op met de afzender.');
+    }
+    if (status === 'invoiced') {
+      return messagePanel('success', 'Deze offerte is omgezet in een factuur.',
+        'Je hoeft niets meer te doen.');
+    }
+    if (status === 'expired') {
+      return messagePanel('error', 'Deze offerte is verlopen.',
+        'De geldigheid eindigde op ' + date(quote.valid_until) + '. Vraag de afzender om een nieuwe offerte.');
+    }
+    return '';
+  }
+
+  function respondForm(quote) {
+    if (statusOf(quote) !== 'sent' || !quote.can_respond) return '';
+    return '<form class="form-card" id="respond-form" style="margin-top:22px" novalidate>' +
+      '<h2>Akkoord geven</h2>' +
+      '<p class="field-hint" style="margin-top:-8px; margin-bottom:16px">' +
+      'Door akkoord te geven ga je uit van deze offerte zoals hij hierboven staat, voor ' +
+      money(quote.total_cents) + ' inclusief btw.</p>' +
+      '<div class="field-group">' +
+      '<label class="field-label" for="respond-name">Je naam</label>' +
+      '<input id="respond-name" class="field-control" type="text" maxlength="200" required ' +
+      'autocomplete="name" placeholder="Voor- en achternaam" value="' +
+      escapeHtml(quote.contact_person || '') + '">' +
+      '</div>' +
+      '<div class="field-group" style="margin-top:16px">' +
+      '<label class="field-label" for="respond-note">Opmerking (optioneel)</label>' +
+      '<textarea id="respond-note" class="field-control" rows="2" maxlength="1000" ' +
+      'placeholder="Bijv. Graag starten in de eerste week van november."></textarea>' +
+      '</div>' +
+      '<div class="form-actions" style="margin-top:18px">' +
+      '<button type="button" class="btn btn-outline" id="decline-quote">Niet akkoord</button>' +
+      '<button type="submit" class="btn btn-primary" id="accept-quote">Akkoord geven</button>' +
+      '</div>' +
+      '<p class="form-note" id="respond-feedback" role="status" aria-live="polite"></p>' +
+      '</form>';
+  }
+
+  function render(quote) {
+    const status = statusOf(quote);
+    document.title = 'Offerte ' + quote.number + ' — Kasflow';
+    root.innerHTML =
+      '<div class="auth-brand" aria-hidden="true" style="display:flex">' +
+      '<span class="logo-mark" aria-hidden="true"></span>Kasflow</div>' +
+      '<div class="panel">' +
+      '<div class="quote-public-head">' +
+      '<div><div class="detail-label">Offerte</div>' +
+      '<h1>' + escapeHtml(quote.number) + '</h1>' +
+      '<div class="topbar-sub">' + date(quote.quote_date) + ' · geldig tot ' + date(quote.valid_until) + '</div></div>' +
+      badge(quote) +
+      '</div>' +
+      '<div class="quote-parties">' +
+      '<div><div class="detail-label">Van</div><strong>' + supplierBlock(quote.supplier) + '</strong></div>' +
+      '<div><div class="detail-label">Voor</div><strong>' + escapeHtml(quote.customer_name) +
+      (quote.contact_person ? '<br>t.a.v. ' + escapeHtml(quote.contact_person) : '') + '</strong></div>' +
+      '</div>' +
+      (quote.vat_notice ? '<p class="form-note">' + escapeHtml(quote.vat_notice) + '</p>' : '') +
+      linesHtml(quote) +
+      totalsHtml(quote) +
+      (quote.note ? '<p class="field-hint" style="margin-top:18px">' + escapeHtml(quote.note) + '</p>' : '') +
+      '</div>' +
+      responsePanel(quote) +
+      respondForm(quote) +
+      '<p class="auth-note" style="text-align:center; margin-top:18px">' +
+      'Deze offerte is opgesteld met Kasflow. Vragen? Mail ' +
+      escapeHtml(quote.supplier.email || 'de afzender') + '.</p>';
+
+    const form = document.getElementById('respond-form');
+    if (!form) return;
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      respond('accept');
+    });
+    document.getElementById('decline-quote').addEventListener('click', () => respond('decline'));
+  }
+
+  async function respond(kind) {
+    const form = document.getElementById('respond-form');
+    const feedback = document.getElementById('respond-feedback');
+    const nameField = document.getElementById('respond-name');
+    const noteField = document.getElementById('respond-note');
+    const button = document.getElementById(kind === 'accept' ? 'accept-quote' : 'decline-quote');
+    const name = nameField.value.trim();
+    if (name.length < 2) {
+      feedback.textContent = 'Vul je naam in, dan weten we wie akkoord gaf.';
+      feedback.dataset.tone = 'error';
+      nameField.focus();
+      return;
+    }
+    if (kind === 'decline' && !window.confirm('Weet je het zeker? De afzender ziet dat je niet akkoord gaat.')) {
+      return;
+    }
+    feedback.textContent = 'Bezig…';
+    delete feedback.dataset.tone;
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/quotes/public/' + encodeURIComponent(token) + '/' + kind, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, note: noteField.value.trim() || null })
+      });
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (error) {
+        payload = null;
+      }
+      if (!response.ok) {
+        throw new Error((payload && payload.detail) || 'Er ging iets mis. Probeer het opnieuw.');
+      }
+      render(payload);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error) {
+      feedback.textContent = error.message;
+      feedback.dataset.tone = 'error';
+      button.disabled = false;
+    }
+  }
+
+  function showError(title, body) {
+    root.innerHTML =
+      '<div class="panel">' +
+      '<div class="quote-public-head"><div><div class="detail-label">Kasflow</div>' +
+      '<h1>' + escapeHtml(title) + '</h1></div></div>' +
+      '<p class="field-hint">' + body + '</p>' +
+      '</div>';
+  }
+
+  async function load() {
+    if (!token) {
+      showError('Deze link is niet compleet.', 'Vraag de afzender om de offerte opnieuw te sturen.');
+      return;
+    }
+    try {
+      const response = await fetch('/api/quotes/public/' + encodeURIComponent(token), {
+        headers: { Accept: 'application/json' }
+      });
+      const payload = await response.json().catch(() => null);
+      if (response.status === 404) {
+        showError('Deze offerte is niet gevonden.',
+          'De link klopt niet of is ingetrokken. Vraag de afzender om een nieuwe link.');
+        return;
+      }
+      if (!response.ok || !payload) {
+        throw new Error('De offerte kon niet worden geladen.');
+      }
+      render(payload);
+    } catch (error) {
+      showError('De offerte kon niet worden geladen.',
+        escapeHtml(error.message) + ' Probeer het later opnieuw.');
+    }
+  }
+
+  load();
+})();
+</script>
+
+</body>
+</html>
